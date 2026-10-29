@@ -374,3 +374,27 @@ thead th { font-weight: 500; color: var(--muted); font-size: 12px; border-bottom
 .draft-chip { white-space: nowrap; }
 .btn.wide { width: 100%; justify-content: center; }
 .pick.y { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+/* tap targets ≥ 24px, form pieces */
+summary { min-height: 28px; display: flex; align-items: center; }
+details > summary { list-style-position: inside; }
+details > summary::-webkit-details-marker { margin-right: 6px; }
+.place-head > a { display: inline-flex; align-items: center; min-height: 32px; align-self: start; width: max-content; }
+.sim-row button, .sim-row a { min-height: 28px; display: inline-flex; align-items: center; flex-wrap: wrap; }
+.ptop button { min-height: 32px; align-items: center; }
+.pick { grid-template-columns: repeat(var(--n, 9), minmax(0, 1fr)); }
+.draft-chip { display: inline-flex; align-items: center; gap: 2px; margin: 2px 6px 2px 0; }
+.draft-chip .linkbtn { min-height: 28px; }
+.chipx { min-width: 28px; min-height: 28px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer; padding: 0 8px; }
+.chipx.armed { background: var(--neg); border-color: var(--neg); color: #fff; }
+.addnote { min-height: 28px; display: inline-flex; align-items: center; margin-top: 4px; }
+.edit-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+.lost { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin-top: 8px; }
+.lost span { flex: 1 1 200px; font-size: 13px; }
+.pin.thin { background: var(--surface); border-width: 3px; border-style: solid; color: var(--ink); }
+.pin.dark { color: var(--ink); text-shadow: none; }
+.fact { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.fact:first-of-type { border-top: 0; padding-top: 0; }
+.fact > .small { grid-column: 1 / -1; }
+.fact .badge { display: inline-block; min-width: 2.4em; padding: 1px 6px; border-radius: 6px; color: var(--ink); font-family: var(--f-mono); font-size: 12px; text-align: center; }
+@media (max-width: 560px) { .fact { grid-template-columns: minmax(0, 1fr); } }

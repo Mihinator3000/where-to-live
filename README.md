@@ -34,6 +34,12 @@
 node --test tests/*.test.mjs
 ```
 
+Сайт целиком в headless Chrome на моке GitHub и Nominatim: каждый экран на 390 и 1280 px (у всех кнопок есть имя, цель ≥ 24 px, ничего не перекрыто, нет горизонтальной прокрутки) и сценарии — оценка, черновики, вслепую, офлайн-очередь, цифры места, ключ, веса. Нужен установленный Chrome (или путь в `CHROME`).
+
+```bash
+node --test tests/e2e/*.test.mjs
+```
+
 ```bash
 python3 -m http.server 8765
 ```
@@ -46,4 +52,4 @@ WTL_TOKEN="$(gh auth token)" node tests/live-github.mjs
 
 ## Источники
 
-Карта © участники OpenStreetMap, поиск Nominatim. Границы Natural Earth (public domain, de facto). Города GeoNames (CC BY 4.0). Климат CHELSA V2.1 (CC0). Показатели стран — World Bank (CC BY 4.0), Our World in Data и первоисточники (UNDP, WHR, V-Dem), INFORM, passport-index-data; подробности — `data/world/indicators.json` и страница настроек.
+Карта © участники OpenStreetMap, поиск Nominatim. Границы Natural Earth (public domain, de facto). Города GeoNames (CC BY 4.0). Климат CHELSA V2.1 (CC0). Показатели стран — World Bank WDI и WGI (CC BY 4.0), V-Dem через Our World in Data (CC BY 4.0), INFORM Risk (землетрясения), passport-index-data (MIT); аэропорты — OurAirports (public domain); подробности — `data/world/indicators.json` и страница настроек.

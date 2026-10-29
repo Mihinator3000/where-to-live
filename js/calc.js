@@ -2,6 +2,7 @@ export const SEASON_W = { "худший": 2, "межсезон": 1.5, "пик": 
 export const MODE_W = { "удалёнка": 1.5, "смешанно": 1.2, "отпуск": 1 };
 export const US_SHARE = { "●": 0.7, "◐": 0.5, "○": 0.2 };
 export const MIN_COVERAGE = 0.5;
+export const MIN_OWN = 0.5;
 
 export const mean = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
 export const fmt = v => (v == null ? "—" : (Math.round(v * 10) / 10).toFixed(1));
@@ -101,12 +102,15 @@ export function createModel(schema, data, opts = {}) {
     return { score: w ? s / w : null, coverage: all ? w / all : 0 };
   }
 
+  const ownShare = id => (STAR_KEYS.length ? STAR_KEYS.filter(k => PEOPLE.some(w => personCat(id, w, k) != null)).length / STAR_KEYS.length : 0);
+  const ownEnough = id => ownShare(id) >= MIN_OWN;
+
   const vetoes = () => ratings.filter(r => r.veto);
   const vetoed = p => ratings.some(r => r.place === p.id && r.veto);
   const candidates = () => places.filter(p => p.status !== "отсев" && !isBase(p) && !vetoed(p));
 
   function ranksFor(W) {
-    const list = candidates().filter(p => ratingsOf(p.id).length).map(p => ({ p, t: total(p, W, "final") })).filter(x => x.t.score != null && x.t.coverage >= MIN_COVERAGE);
+    const list = candidates().filter(p => ownEnough(p.id)).map(p => ({ p, t: total(p, W, "final") })).filter(x => x.t.score != null && x.t.coverage >= MIN_COVERAGE);
     list.sort((a, b) => b.t.score - a.t.score);
     const r = {};
     list.forEach((x, i) => { r[x.p.id] = i + 1; });
@@ -130,7 +134,7 @@ export function createModel(schema, data, opts = {}) {
   function latestYear(id, who) {
     const rs = ratings.filter(r => r.place === id && r.who === who && r.year != null);
     if (!rs.length) return null;
-    rs.sort((a, b) => String(b.updatedAt || b.end || "").localeCompare(String(a.updatedAt || a.end || "")));
+    rs.sort((a, b) => String(b.end || b.start || "").localeCompare(String(a.end || a.start || "")) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     return rs[0].year;
   }
 
@@ -188,7 +192,7 @@ export function createModel(schema, data, opts = {}) {
 
   return {
     PEOPLE, GROUPS, CATS, CAT, GROUP, STAR_KEYS, EQUAL, presets, hasOwnWeights,
-    places, ratings, PLACE, isBase, ratingsOf,
+    places, ratings, PLACE, isBase, ratingsOf, ownShare, ownEnough,
     personCat, usCat, extCat, finalCat, catValue, groupScore, total,
     vetoes, vetoed, candidates, ranksFor, rankRange, latestYear, confOf, catFlags, allFlags, ranking,
     normalize: w => normalize(GROUPS, w),

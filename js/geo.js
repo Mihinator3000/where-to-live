@@ -31,7 +31,9 @@ export async function search(q) {
   const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&accept-language=ru&q=${encodeURIComponent(q)}`;
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error("Поиск недоступен (" + res.status + ")");
-  return (await res.json()).map(norm);
+  const out = [];
+  (await res.json()).map(norm).forEach(g => { if (!out.some(o => o.name === g.name && Math.abs(o.lat - g.lat) < 0.02 && Math.abs(o.lon - g.lon) < 0.03)) out.push(g); });
+  return out;
 }
 
 export async function reverse(lat, lon) {
@@ -41,5 +43,8 @@ export async function reverse(lat, lon) {
   if (!res.ok) throw new Error("Поиск недоступен (" + res.status + ")");
   const r = await res.json();
   if (r.error) return null;
-  return norm(r);
+  const a = r.address || {};
+  const g = norm(r);
+  g.name = a.city || a.town || a.village || a.hamlet || a.municipality || g.name;
+  return g;
 }

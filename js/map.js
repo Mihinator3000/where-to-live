@@ -79,7 +79,7 @@ export class MapView {
     const size = p.base ? 26 : 30;
     const icon = L.divIcon({
       className: "",
-      html: `<div class="pin${p.base ? " base" : ""}${p.out ? " out" : ""}" style="width:${size}px;height:${size}px;background:${p.color}">${esc(p.text || "")}</div>`,
+      html: `<div class="pin${p.base ? " base" : ""}${p.out ? " out" : ""}${p.thin ? " thin" : ""}${p.dark ? " dark" : ""}" style="width:${size}px;height:${size}px;${p.thin ? "border-color" : "background"}:${p.color}">${esc(p.text || "")}</div>`,
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
     });

@@ -138,12 +138,13 @@ export class Data extends EventTarget {
       try {
         await this.store.commit(batch.map(c => ({ path: c.path, content: c.content, baseOid: c.baseOid })), batch.flatMap(c => c.messages).join("; ").slice(0, 200));
         this.pending = this.pending.slice(n);
+        this.flushed = (this.flushed || 0) + batch.length;
       } catch (e) {
         if (e.code !== "clash") throw e;
         const lost = this.pending.filter(c => e.paths.includes(c.path));
         local.set("lost", local.get("lost", []).concat(lost.map(c => Object.assign({ at: new Date().toISOString() }, c))).slice(-50));
         this.pending = this.pending.filter(c => !e.paths.includes(c.path));
-        this.notice = "Не отправлено: это же изменили с другого телефона (" + e.paths.join(", ") + "). Ваша версия есть в экспорте JSON в настройках.";
+        this.notice = "Не отправлено: это же изменили на другом устройстве. Ниже можно применить свою версию поверх или выбросить её.";
       }
       local.set("pending", this.pending);
       this.adopt();
@@ -153,6 +154,39 @@ export class Data extends EventTarget {
   write(changes, message) {
     if (!this.store) return Promise.reject(new StoreError("notoken", "Сначала вставьте ключ доступа в настройках"));
     return this.serial(async () => {
+      const queued = new Set(this.pending.map(c => c.path));
+      if (changes.some(c => queued.has(c.path))) {
+        const mine = changes.map(c => Object.assign({ message }, c));
+        this.pending.push(...mine);
+        local.set("pending", this.pending);
+        const lostBefore = this.lost.length;
+        try {
+          await this.flush();
+          const lost = this.lost;
+          const clashed = lost.slice(lostBefore).filter(l => mine.some(c => c.path === l.path));
+          if (clashed.length) {
+            local.set("lost", lost.filter(l => !clashed.includes(l)));
+            if (this.lost.length === 0) this.notice = "";
+            this.emit();
+            throw Object.assign(new StoreError("clash", "Это уже изменили на другом устройстве"), { paths: clashed.map(l => l.path) });
+          }
+          this.status = "live";
+          this.error = "";
+          this.emit();
+          return "sent";
+        } catch (e) {
+          this.adopt();
+          if (e.code === "clash") throw e;
+          if (e.code !== "offline") {
+            this.pending = this.pending.filter(c => !mine.includes(c));
+            local.set("pending", this.pending);
+            this.fail(e); this.emit(); throw e;
+          }
+          this.status = "pending";
+          this.emit();
+          return "queued";
+        }
+      }
       try {
         await this.flush();
         await this.store.commit(changes, message);
@@ -181,24 +215,44 @@ export class Data extends EventTarget {
     return id;
   }
 
-  savePlace(place, isNew) {
+  savePlace(place, isNew, baseOid) {
     const now = new Date().toISOString();
     const doc = Object.assign({}, place, { updatedAt: now, createdAt: place.createdAt || now });
     if (!doc.id) doc.id = this.newPlaceId(doc.name);
-    return this.write([{ path: pathOf("places", doc.id), content: serialize(doc), baseOid: isNew ? null : this.oidOf("places", doc.id) }], `${isNew ? "Add" : "Update"} place ${doc.id}`).then(r => ({ r, doc }));
+    return this.write([{ path: pathOf("places", doc.id), content: serialize(doc), baseOid: isNew ? null : baseOid || this.oidOf("places", doc.id) }], `${isNew ? "Add" : "Update"} place ${doc.id}`).then(r => ({ r, doc }));
   }
 
-  saveRating(rating, extra = []) {
+  saveRating(rating, { extra = [], isNew = !rating.id, baseOid } = {}) {
     const now = new Date().toISOString();
-    const isNew = !rating.id;
-    const doc = Object.assign({}, rating, { id: rating.id || uid("r"), updatedAt: now, createdAt: rating.createdAt || now, deleted: false });
-    const changes = extra.concat([{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: isNew ? null : this.oidOf("ratings", doc.id) }]);
+    const doc = Object.assign({}, rating, { id: rating.id || uid("r"), updatedAt: rating.updatedAt || now, createdAt: rating.createdAt || now, deleted: false });
+    const base = isNew ? null : baseOid || this.oidOf("ratings", doc.id);
+    const changes = extra.concat([{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: base }]);
     return this.write(changes, `${isNew ? "Add" : "Update"} rating ${doc.id}`).then(r => ({ r, doc }));
   }
 
-  deleteRating(rating) {
+  deleteRating(rating, baseOid) {
     const doc = Object.assign({}, rating, { deleted: true, updatedAt: new Date().toISOString() });
-    return this.write([{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: this.oidOf("ratings", doc.id) }], `Delete rating ${doc.id}`);
+    return this.write([{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: baseOid || this.oidOf("ratings", doc.id) }], `Delete rating ${doc.id}`);
+  }
+
+  get lost() { return local.get("lost", []); }
+
+  dropLost(i) {
+    const l = this.lost;
+    l.splice(i, 1);
+    local.set("lost", l);
+    if (!l.length) this.notice = "";
+    this.emit();
+  }
+
+  applyLost(i) {
+    const item = this.lost[i];
+    if (!item) return Promise.resolve(null);
+    return this.write([{ path: item.path, content: item.content, baseOid: this.oids[item.path] || null }], (item.message || "Apply") + " (повтор)").then(r => {
+      const j = this.lost.findIndex(l => l.path === item.path && l.at === item.at);
+      if (j >= 0) this.dropLost(j);
+      return r;
+    });
   }
 
   saveWeights(who, w) {
@@ -210,6 +264,6 @@ export class Data extends EventTarget {
   placeChange(place) {
     const now = new Date().toISOString();
     const doc = Object.assign({}, place, { updatedAt: now, createdAt: place.createdAt || now });
-    return { path: pathOf("places", doc.id), content: serialize(doc), baseOid: null };
+    return { path: pathOf("places", doc.id), content: serialize(doc), baseOid: this.oidOf("places", doc.id) };
   }
 }

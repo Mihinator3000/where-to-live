@@ -47,8 +47,13 @@ KOPPEN = ("Af Am As Aw BWk BWh BSk BSh Cfa Cfb Cfc Csa Csb Csc Cwa Cwb Cwc "
 
 SOURCE = ("GeoNames cities15000/cities1000 (CC BY 4.0); названия — Wikidata (CC0); климат — CHELSA V2.1 "
           "climatologies 1981–2010 (CC0; Karger et al. 2017, Sci Data 4:170122; Karger et al. 2021, "
-          "EnviDat doi:10.16904/envidat.228.v2.1); аэропорты — OurAirports (public domain); "
-          "страны — Natural Earth (public domain)")
+          "EnviDat doi:10.16904/envidat.228.v2.1); аэропорты — OurAirports (public domain), без стран с визой "
+          "для паспорта РФ — passport-index-data (MIT); страны — Natural Earth (public domain)")
+AIR_TYPES = {"large_airport", "medium_airport"}
+# Residence in one Schengen state opens its other airports, so a city there is not cut off from them.
+SCHENGEN = set("AUT BEL BGR CHE CZE DEU DNK ESP EST FIN FRA GRC HRV HUN ISL ITA LIE LTU LUX LVA MLT NLD NOR POL "
+               "PRT ROU SVK SVN SWE".split())
+UPDATABLE = {"air", "tn", "tn1"}
 
 os.environ.update({
     "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
@@ -217,15 +222,52 @@ def ru_labels_by_name(fx, rows, batch=100, max_km=25):
     return {k: v[0] for k, v in out.items()}
 
 
-def airports(fx):
+def ru_visa_days(path):
+    """Days without a visa for a Russian passport by ISO3, from indicators.json (build_countries.py runs first)."""
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        return {iso: v["ru_visa"][0] for iso, v in d["countries"].items() if "ru_visa" in v}
+    except Exception as e:  # noqa: BLE001
+        log(f"WARNING: no ru_visa in {path} ({e}): airports are not filtered by visa")
+        return None
+
+
+def airports(fx, iso):
+    """Large and medium airports with scheduled flights: (lat, lon, ISO3, ident). Closed ones (Atatürk) drop out."""
     rd = csv.DictReader(io.StringIO(fx.get(AIRPORTS, name="airports.csv").decode("utf-8")))
-    return [(float(a["latitude_deg"]), float(a["longitude_deg"])) for a in rd if a["type"] == "large_airport"]
+    return [(float(a["latitude_deg"]), float(a["longitude_deg"]), iso.get(a["iso_country"]), a["ident"])
+            for a in rd if a["type"] in AIR_TYPES and a["scheduled_service"] == "yes"]
+
+
+class AirIndex:
+    """Nearest usable airport for a city: same country, the same Schengen zone, or a country whose
+    ru_visa is above 0 days. Dubrovnik is out for Herceg Novi, Spanish airports stay for Spanish cities."""
+
+    def __init__(self, air, days):
+        self.air, self.days, self.by_cc = air, days, {}
+
+    def ok(self, cc, a):
+        return self.days is None or a == cc or (cc in SCHENGEN and a in SCHENGEN) or self.days.get(a, 0) > 0
+
+    def nearest(self, lat, lon, cc):
+        if cc not in self.by_cc:
+            self.by_cc[cc] = [x for x in self.air if self.ok(cc, x[2])]
+        pts = self.by_cc[cc]
+        if not pts:
+            return None, None
+        k = nearest_idx(lat, lon, pts)
+        return nearest_km(lat, lon, [pts[k][:2]]), pts[k][3]
+
+
+def nearest_idx(lat, lon, pts):
+    c = math.cos(math.radians(lat))
+    return min(range(len(pts)), key=lambda i: (pts[i][0] - lat) ** 2 + ((pts[i][1] - lon + 540) % 360 - 180) ** 2 * c * c)
 
 
 def nearest_km(lat, lon, pts):
     p1 = math.radians(lat)
     best = 1e9
-    for la, lo in pts:
+    for la, lo in (x[:2] for x in pts):
         p2 = math.radians(la)
         h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lo - lon) / 2) ** 2
         best = min(best, 2 * 6371.0088 * math.asin(math.sqrt(h)))
@@ -248,6 +290,7 @@ def rasters():
     for v in ("tas", "pr", "clt"):
         out += [(f"{v}_{m:02d}", f"{c}/{v}/1981-2010/CHELSA_{v}_{m:02d}_1981-2010_V.2.1.tif") for m in range(1, 13)]
     out += [("tasmax_07", f"{c}/tasmax/1981-2010/CHELSA_tasmax_07_1981-2010_V.2.1.tif"),
+            ("tasmin_07", f"{c}/tasmin/1981-2010/CHELSA_tasmin_07_1981-2010_V.2.1.tif"),
             ("tasmin_01", f"{c}/tasmin/1981-2010/CHELSA_tasmin_01_1981-2010_V.2.1.tif"),
             ("kg0", f"{CHELSA}/bioclim/kg0/1981-2010/CHELSA_kg0_1981-2010_V.2.1.tif")]
     return out
@@ -296,6 +339,20 @@ def sample(url, pts, level, nb=2):
     return out
 
 
+def sample_par(url, pts, level, n):
+    """sample() split into n threads by region: one raster is latency-bound, not CPU-bound."""
+    if n <= 1 or len(pts) < 200:
+        return sample(url, pts, level)
+    order = sorted(range(len(pts)), key=lambda i: (pts[i][1] // 10, pts[i][0]))
+    parts = [order[j * len(order) // n:(j + 1) * len(order) // n] for j in range(n)]
+    out = [None] * len(pts)
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        for part, vals in zip(parts, ex.map(lambda q: sample(url, [pts[i] for i in q], level), parts)):
+            for i, v in zip(part, vals):
+                out[i] = v
+    return out
+
+
 def pkey(lon, lat):
     return f"{lon:.4f},{lat:.4f}"
 
@@ -305,6 +362,7 @@ def sample_all(pts, cache, level, workers, only=None):
     cdir = Path(cache) / f"chelsa_L{level}"
     cdir.mkdir(parents=True, exist_ok=True)
     todo = [(k, u) for k, u in rasters() if not only or k in only]
+    per = max(1, workers // max(1, len(todo)))
     res = {}
 
     def run(k, u):
@@ -316,7 +374,7 @@ def sample_all(pts, cache, level, workers, only=None):
             lv = -1 if k == "kg0" else level  # categories: never resampled overviews
             for attempt in range(3):
                 try:
-                    vals = sample(u, new, lv)
+                    vals = sample_par(u, new, lv, per)
                     break
                 except Exception as e:  # noqa: BLE001
                     log(f"  {k} attempt {attempt + 1}: {e}")
@@ -349,6 +407,58 @@ def r0(v):
     return None if v is None else int(round(v))
 
 
+def kelvin(v):
+    return r1(None if v is None else v - 273.15)
+
+
+def update(a, fx):
+    """Recompute only some fields of the existing cities.json, no full CHELSA/Wikidata run."""
+    fields = set(a.update.split(","))
+    if fields - UPDATABLE:
+        sys.exit(f"--update: unknown fields {sorted(fields - UPDATABLE)}, allowed {sorted(UPDATABLE)}")
+    out = Path(a.out)
+    cities = json.loads(out.read_text(encoding="utf-8"))["cities"]
+    if "air" in fields:
+        ai = AirIndex(airports(fx, iso_map(fx)), ru_visa_days(a.indicators))
+        log(f"airports with scheduled flights: {len(ai.air)}")
+        for c in cities:
+            c["air"] = r0(ai.nearest(c["lat"], c["lon"], c["cc"])[0])
+    clim_fields = {"tn": "tasmin_07", "tn1": "tasmin_01"}
+    keys = {clim_fields[f] for f in fields & set(clim_fields)}
+    if keys:
+        exact = {r[0]: (float(r[5]), float(r[4])) for r in gn_rows(fx, "cities1000")}
+        pts = [exact.get(str(c["id"]), (c["lon"], c["lat"])) for c in cities]
+        log(f"points: {len(pts)}, exact GeoNames coordinates for {sum(str(c['id']) in exact for c in cities)}")
+        clim = sample_all(pts, a.cache, a.level, a.workers, keys)
+        for f, k in clim_fields.items():
+            if f in fields:
+                for c, v in zip(cities, clim[k]):
+                    c[f] = kelvin(v)
+    return cities
+
+
+def write(out, cities, t0):
+    cities.sort(key=lambda c: (-c["pop"], c["id"]))
+    gen = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    head = json.dumps({"generated": gen, "source": SOURCE}, ensure_ascii=False)[:-1]
+    body = ",\n".join(json.dumps(c, ensure_ascii=False, separators=(",", ":")) for c in cities)
+    text = head + ',"cities":[\n' + body + "\n]}\n"
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists() and out.read_text(encoding="utf-8").split("\n", 1)[-1] == text.split("\n", 1)[-1]:
+        log("data unchanged, file kept")
+    else:
+        out.write_text(text, encoding="utf-8")
+    json.loads(out.read_text(encoding="utf-8"))
+    raw = len(text.encode("utf-8"))
+    gz = len(gzip.compress(text.encode("utf-8"), 9))
+    miss = sum(1 for c in cities if c["t"][0] is None)
+    log(f"wrote {out}: {len(cities)} cities, {raw / 1e6:.2f} MB raw, {gz / 1e6:.2f} MB gzip, "
+        f"no climate: {miss}, no cc: {sum(1 for c in cities if not c['cc'])}, total {time.time() - t0:.0f}s")
+    if raw > 1_500_000:
+        log("WARNING: cities.json > 1.5 MB")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "data" / "world" / "cities.json"))
@@ -357,9 +467,15 @@ def main():
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--limit", type=int, default=0, help="test: random sample of N cities")
     ap.add_argument("--only", default="", help="test: comma-separated raster keys")
+    ap.add_argument("--update", default="", help="recompute only these fields of the existing --out: air,tn,tn1")
+    ap.add_argument("--indicators", default=str(ROOT / "data" / "world" / "indicators.json"),
+                    help="ru_visa source for the airport visa filter")
     a = ap.parse_args()
     t0 = time.time()
     fx = Fetcher(a.cache)
+    if a.update:
+        write(a.out, update(a, fx), t0)
+        return
 
     iso = iso_map(fx)
     rows, dropped = select(fx)
@@ -383,8 +499,8 @@ def main():
     n1 = len(names)
     names.update(ru_labels_by_name(fx, [r for r in rows if r[0] not in names]))
     log(f"ru labels: {len(names)}/{len(rows)} (by GeoNames ID {n1}, by name+coords {len(names) - n1})")
-    air = airports(fx)
-    log(f"large airports: {len(air)}")
+    ai = AirIndex(airports(fx, iso), ru_visa_days(a.indicators))
+    log(f"airports with scheduled flights: {len(ai.air)}")
     year = dt.date.today().year
 
     cities = []
@@ -397,33 +513,15 @@ def main():
             "id": int(r[0]), "n": names.get(r[0], r[1]), "en": r[1],
             "lat": round(lat, 3), "lon": round(lon, 3), "cc": iso.get(r[8]), "pop": int(r[14] or 0),
             "el": el, "tz": tz_offset(r[17], lat, year) if r[17] else None,
-            "air": r0(nearest_km(lat, lon, air)) if air else None, "kg": kg,
+            "air": r0(ai.nearest(lat, lon, iso.get(r[8]))[0]), "kg": kg,
             "t": [r1(None if v is None else v - 273.15) for v in (clim[f"tas_{m:02d}"][i] for m in range(1, 13))],
             "p": [r0(clim[f"pr_{m:02d}"][i]) for m in range(1, 13)],
             "c": [r0(clim[f"clt_{m:02d}"][i]) for m in range(1, 13)],
-            "tx": r1(None if clim["tasmax_07"][i] is None else clim["tasmax_07"][i] - 273.15),
-            "tn": r1(None if clim["tasmin_01"][i] is None else clim["tasmin_01"][i] - 273.15),
+            "tx": kelvin(clim["tasmax_07"][i]),
+            "tn": kelvin(clim["tasmin_07"][i]),
+            "tn1": kelvin(clim["tasmin_01"][i]),
         })
-    cities.sort(key=lambda c: (-c["pop"], c["id"]))
-
-    gen = dt.datetime.now(dt.timezone.utc).date().isoformat()
-    head = json.dumps({"generated": gen, "source": SOURCE}, ensure_ascii=False)[:-1]
-    body = ",\n".join(json.dumps(c, ensure_ascii=False, separators=(",", ":")) for c in cities)
-    text = head + ',"cities":[\n' + body + "\n]}\n"
-    out = Path(a.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists() and out.read_text(encoding="utf-8").split("\n", 1)[-1] == text.split("\n", 1)[-1]:
-        log("data unchanged, file kept")
-    else:
-        out.write_text(text, encoding="utf-8")
-    json.loads(out.read_text(encoding="utf-8"))
-    raw = len(text.encode("utf-8"))
-    gz = len(gzip.compress(text.encode("utf-8"), 9))
-    miss = sum(1 for c in cities if c["t"][0] is None)
-    log(f"wrote {out}: {len(cities)} cities, {raw / 1e6:.2f} MB raw, {gz / 1e6:.2f} MB gzip, "
-        f"no climate: {miss}, no cc: {sum(1 for c in cities if not c['cc'])}, total {time.time() - t0:.0f}s")
-    if raw > 1_500_000:
-        log("WARNING: cities.json > 1.5 MB")
+    write(a.out, cities, t0)
 
 
 if __name__ == "__main__":

@@ -30,8 +30,8 @@ test("offline queue: a clash drops only the clashing file and keeps a copy", asy
   assert.equal(a.pending.length, 0);
   assert.equal(Object.keys(remote.state.files).filter(p => p.startsWith("ratings/")).length, 1);
   assert.equal(a.view().places[0].questions, "B");
-  assert.match(a.notice, /places\/budva\.json/);
-  assert.equal(JSON.parse(localStorage.getItem("wtl:lost")).length, 1);
+  assert.match(a.notice, /Не отправлено/);
+  assert.deepEqual(a.lost.map(l => l.path), ["places/budva.json"]);
   assert.equal(a.status, "live");
 });
 
@@ -72,4 +72,65 @@ test("offline edits flushed by a later save stay visible", async () => {
   await a.saveRating({ place: "budva", who: "Михаил", scores: { "аренда": 4 } });
   assert.equal(a.view().places[0].status, "база");
   assert.equal(read("places/budva.json").status, "база");
+});
+
+test("saving a file again while its first version is still queued does not report a false clash", async () => {
+  const { remote, read } = setup({ "places/budva.json": serialize(P) });
+  const a = new Data();
+  await a.refresh();
+  remote.state.offlineNext = 1;
+  assert.equal((await a.savePlace(Object.assign({}, P, { questions: "1" }), false)).r, "queued");
+  const { r } = await a.savePlace(Object.assign({}, P, { questions: "2" }), false);
+  assert.equal(r, "sent");
+  assert.equal(a.pending.length, 0);
+  assert.equal(read("places/budva.json").questions, "2");
+});
+
+test("a rating saved twice with the same id and stamp is not duplicated", async () => {
+  const { remote } = setup({ "places/budva.json": serialize(P) });
+  const a = new Data();
+  await a.refresh();
+  const body = { id: "r-fixed", place: "budva", who: "Михаил", scores: { "шум": 4 }, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z" };
+  remote.state.dropResponseNext = 1;
+  await a.saveRating(body, { isNew: true });
+  await a.saveRating(body, { isNew: true });
+  await a.refresh();
+  assert.equal(Object.keys(remote.state.files).filter(p => p.startsWith("ratings/")).length, 1);
+  assert.equal(a.pending.length, 0);
+});
+
+test("an edit based on an old version refuses to overwrite a newer one", async () => {
+  const { remote, editB, read } = setup({ "places/budva.json": serialize(P) });
+  const a = new Data();
+  await a.refresh();
+  const { doc } = await a.saveRating({ place: "budva", who: "Михаил", scores: { "шум": 4 } });
+  const oldOid = a.oidOf("ratings", doc.id);
+  await editB(`ratings/${doc.id}.json`, Object.assign({}, doc, { scores: { "шум": 1 } }));
+  await a.refresh();
+  await assert.rejects(a.saveRating(Object.assign({}, doc, { scores: { "шум": 5 } }), { baseOid: oldOid }), e => e.code === "clash");
+  assert.equal(read(`ratings/${doc.id}.json`).scores["шум"], 1);
+});
+
+test("saving again over a queued version that clashes reports the clash instead of «saved»", async () => {
+  const { remote, editB, read } = setup({ "places/budva.json": serialize(P) });
+  const a = new Data();
+  await a.refresh();
+  remote.state.offlineNext = 1;
+  assert.equal((await a.savePlace(Object.assign({}, P, { questions: "A1" }), false)).r, "queued");
+  await editB("places/budva.json", Object.assign({}, P, { questions: "B" }));
+  await assert.rejects(a.savePlace(Object.assign({}, P, { questions: "A2" }), false), e => e.code === "clash");
+  assert.equal(read("places/budva.json").questions, "B");
+  assert.equal(a.pending.length, 0);
+  assert.deepEqual(a.lost, [], "the caller keeps the edit, so no duplicate copy in «not sent»");
+});
+
+test("a queued save that fails for a reason other than the network leaves nothing behind to resend twice", async () => {
+  const { remote } = setup({ "places/budva.json": serialize(P) });
+  const a = new Data();
+  await a.refresh();
+  remote.state.offlineNext = 1;
+  await a.savePlace(Object.assign({}, P, { questions: "A1" }), false);
+  remote.state.failNext = 1;
+  await assert.rejects(a.savePlace(Object.assign({}, P, { questions: "A2" }), false));
+  assert.deepEqual(a.pending.map(c => JSON.parse(c.content).questions), ["A1"]);
 });

@@ -1,12 +1,13 @@
-import { $, esc, local, daysBetween } from "./util.js";
+import { $, esc, local, daysBetween, uid } from "./util.js";
 
 const HALF = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 export const CONF = { A: "проверили в быту", B: "видели как туристы", C: "со слов живущих", D: "по сайтам и рейтингам" };
-const emptyForm = () => ({ id: null, createdAt: null, who: local.get("me", ""), place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", scores: {}, conf: {}, notes: {} });
+const MODE_LABEL = { "отпуск": "не работали", "удалёнка": "работали все будни", "смешанно": "работали часть дней" };
+const emptyForm = (who = local.get("me", "")) => ({ id: null, createdAt: null, who, place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", questions: "", scores: {}, conf: {}, notes: {}, draftId: null, stamp: null, _oid: null });
 const keyOf = f => (f.id ? "edit:" + f.id : f.place || "_new");
-const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined }));
+const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined, _oid: undefined }));
 const changed = f => !f.id || f._orig !== snap(f);
-const hasContent = f => Object.keys(f.scores).length > 0 || f.year != null || !!(f.review.trim() || f.surprises.trim() || f.veto.trim()) || Object.values(f.notes).some(v => v && v.trim());
+const hasContent = f => Object.keys(f.scores).length > 0 || f.year != null || !!(f.review.trim() || f.surprises.trim() || f.veto.trim() || (f.questions || "").trim()) || Object.values(f.notes).some(v => v && v.trim());
 const numRu = v => String(v).replace(".", ",");
 const hintText = h => h.replace(/уверенность ([ABCD])/g, (m, l) => `откуда знаем: «${CONF[l]}»`);
 
@@ -28,13 +29,14 @@ export class RateForm {
     this.schema = schema;
     this.hooks = hooks;
     this.PEOPLE = schema.people;
-    this.STAR_KEYS = schema.cats.filter(c => c.star).map(c => c.key);
-    this.GROUPS = schema.groups.map(g => ({ g, cats: schema.cats.filter(c => c.group === g.key && c.form).sort((a, b) => Number(b.star) - Number(a.star)) })).filter(x => x.cats.length);
+    this.STAR_KEYS = schema.cats.filter(c => c.star && c.form).map(c => c.key);
+    this.GROUPS = schema.groups.map(g => ({ g, cats: schema.cats.filter(c => c.group === g.key && c.form).sort((a, b) => Number(b.star) - Number(a.star) || Number(!!a.opt) - Number(!!b.opt)) })).filter(x => x.cats.length);
     this.form = Object.assign(emptyForm(), local.get("draft", {}));
     this.drafts = local.get("drafts", {});
     this.onlyStar = local.get("onlyStar", true);
     this.armed = "";
     this.confOpen = null;
+    this.notesOpen = new Set();
     this.saving = false;
     this.places = [];
     this.timer = null;
@@ -45,56 +47,72 @@ export class RateForm {
 
   persist() { local.set("draft", this.form); local.set("drafts", this.drafts); }
 
+  stash() {
+    const f = this.form, k = keyOf(f);
+    if (hasContent(f) && changed(f)) this.drafts[k] = f;
+    else if (this.drafts[k] === f) delete this.drafts[k];
+  }
+
   switchTo(next) {
-    if (hasContent(this.form) && changed(this.form)) this.drafts[keyOf(this.form)] = this.form;
-    else delete this.drafts[keyOf(this.form)];
+    this.stash();
     this.form = next;
-    delete this.drafts[keyOf(next)];
-    this.armed = ""; this.confOpen = null;
+    if (this.drafts[keyOf(next)] === next) delete this.drafts[keyOf(next)];
+    this.armed = ""; this.confOpen = null; this.notesOpen.clear();
     this.persist();
     this.setPlaces(this.places);
     this.msg("");
   }
 
+  reset() {
+    this.form = emptyForm();
+    this.drafts = {};
+    this.armed = ""; this.confOpen = null; this.notesOpen.clear();
+    this.persist();
+    this.sync();
+  }
+
   build() {
     const O = this.schema.options;
-    const seg = (name, values) => values.map(v => `<button type="button" data-opt="${name}" data-val="${esc(v)}" aria-pressed="false">${esc(v)}</button>`).join("");
+    const seg = (name, values, label = v => v) => values.map(v => `<button type="button" data-opt="${name}" data-val="${esc(v)}" aria-pressed="false">${esc(label(v))}</button>`).join("");
     const extra = this.schema.cats.filter(c => c.form && !c.star).length;
     let html = `<div id="fTop"></div><div class="panel fcard">
       <h3>Кто и где</h3>
-      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше. «Лучше» — значит лучше для нас: дешевле, тише, суше, безопаснее.</span><span>Под поставленной оценкой видно, откуда мы это знаем. По умолчанию «видели как туристы»; нажмите, чтобы выбрать другое.</span></div>
-      <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div></div>
+      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили: пустой ответ лучше догадки.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше. «Лучше» — значит лучше для нас: тише, чище, безопаснее.</span><span>Аренду, цены и жёсткость воды здесь не оцениваем: это цифры места, они вписываются один раз в его карточку.</span></div>
+      <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает" id="fWho">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div></div>
       <div class="field"><label class="lbl" for="fPlace">Место</label><select id="fPlace"></select><span class="small muted" id="fPlaceHint">Нет в списке — <a href="#/map">найдите на карте</a> и нажмите «Добавить место».</span></div>
       <div class="frow">
         <label class="field" for="fStart"><span class="lbl">Приехали</span><input type="date" id="fStart"></label>
         <label class="field" for="fEnd"><span class="lbl">Уехали</span><input type="date" id="fEnd"></label>
       </div>
-      <div class="field"><span class="lbl">Сезон</span><div class="seg" role="group" aria-label="Сезон">${seg("season", O.season)}</div></div>
-      <div class="field"><span class="lbl">Режим</span><div class="seg" role="group" aria-label="Режим">${seg("mode", O.mode)}</div></div>
+      <div class="field"><span class="lbl">Сезон</span><div class="seg" role="group" aria-label="Сезон">${seg("season", O.season)}</div><span class="small muted">«Худший» — самое неудобное время для этого места (для курорта — зима, для юга — разгар лета). Такая поездка весит вдвое, межсезон — в полтора раза.</span></div>
+      <div class="field"><span class="lbl">Работали из поездки?</span><div class="seg" role="group" aria-label="Работали из поездки">${seg("mode", O.mode, v => MODE_LABEL[v] || v)}</div><span class="small muted">Рабочие будни показывают обычную жизнь, поэтому такая поездка весит больше.</span></div>
       <div class="field"><span class="lbl">Где жили</span><div class="seg" role="group" aria-label="Где жили">${seg("housing", O.housing)}</div></div>
-      <label class="toggle" for="fRetro"><input type="checkbox" id="fRetro"> Оцениваем по памяти: поездка закончилась больше месяца назад</label>
-      <label class="toggle" for="fOnlyStar"><input type="checkbox" id="fOnlyStar"> Только главные вопросы ★ (${this.STAR_KEYS.length}) — минимум для каждой поездки</label>
+      <label class="toggle" for="fRetro"><input type="checkbox" id="fRetro"> По памяти: поездка закончилась больше месяца назад (такая оценка весит меньше)</label>
+      <label class="toggle" for="fOnlyStar"><input type="checkbox" id="fOnlyStar"> Только главные вопросы ★ (${this.STAR_KEYS.length})</label>
     </div>`;
     this.GROUPS.forEach(({ g, cats }) => {
       html += `<div class="panel fcard" data-group="${g.key}"><h3>${esc(g.name)} <span class="gcount" id="gc-${g.key}"></span></h3><div>`;
       cats.forEach(c => {
-        html += `<div class="q" data-q="${c.key}" data-star="${c.star ? 1 : 0}">
+        const vals = HALF.filter(v => v <= (c.cap || 5));
+        const ends = c.cap ? `<span>сильно хуже</span><span></span><span>как СПб</span>` : `<span>хуже СПб</span><span>как СПб</span><span>лучше</span>`;
+        html += `<div class="q${c.cap ? " capped" : ""}" data-q="${c.key}" data-star="${c.star ? 1 : 0}">
           <div class="q-head"><span class="q-name">${c.star ? "★ " : ""}${esc(c.name)}</span><span class="q-val" data-qval="${c.key}"></span></div>
           ${c.hint ? `<span class="q-hint">${esc(hintText(c.hint))}</span>` : ""}
-          <div class="pick" role="group" aria-label="${esc(c.name)}">${HALF.map(v => `<button type="button" class="${v % 1 ? "half" : ""}" data-score="${c.key}" data-v="${v}" aria-label="${numRu(v)}" aria-pressed="false">${v % 1 ? Math.floor(v) + "½" : v}</button>`).join("")}</div>
-          <div class="pick-ends" aria-hidden="true"><span>хуже СПб</span><span>как СПб</span><span>лучше</span></div>
+          <div class="pick" role="group" aria-label="${esc(c.name)}" style="--n:${vals.length}">${vals.map(v => `<button type="button" class="${v % 1 ? "half" : ""}" data-score="${c.key}" data-v="${v}" aria-label="${numRu(v)}" aria-pressed="false">${v % 1 ? Math.floor(v) + "½" : v}</button>`).join("")}</div>
+          <div class="pick-ends" aria-hidden="true">${ends}</div>
           <div class="conf-line"><button type="button" class="conf" data-conf="${c.key}" aria-expanded="false"></button></div>
           <div class="conf-pick" data-confpick="${c.key}" role="group" aria-label="Откуда знаем" hidden>${Object.keys(CONF).map(l => `<button type="button" data-confset="${c.key}" data-l="${l}" aria-pressed="false">${CONF[l]}</button>`).join("")}</div>
         </div>`;
       });
-      html += `</div><label class="field" for="note-${g.key}"><span class="lbl">Комментарий по группе: что видели, почему такие баллы</span><textarea id="note-${g.key}" data-note="${g.key}" rows="2"></textarea></label></div>`;
+      html += `</div><button type="button" class="linkbtn small addnote" data-addnote="${g.key}">+ комментарий к группе</button><label class="field" for="note-${g.key}" data-notebox="${g.key}" hidden><span class="lbl">Комментарий: что видели, почему такие баллы</span><textarea id="note-${g.key}" data-note="${g.key}" rows="2"></textarea></label></div>`;
     });
-    html += `<button type="button" class="btn ghost wide" id="fShowAll" hidden>Показать все вопросы (ещё ${extra})</button>
+    html += `<button type="button" class="btn ghost wide" id="fShowAll" hidden>Показать остальные вопросы (ещё ${extra})</button>
     <div class="panel fcard"><h3>Итог</h3>
       <div class="field"><span class="lbl">Прожили бы здесь год? Отдельная шкала 0–10: 0 — ни за что, 10 — хоть завтра</span><div class="pick y" role="group" aria-label="Год здесь">${Array.from({ length: 11 }, (_, i) => `<button type="button" data-year="${i}" aria-pressed="false">${i}</button>`).join("")}</div></div>
       <label class="field" for="fReview"><span class="lbl">Отзыв в двух-трёх фразах (виден на карте)</span><textarea id="fReview" rows="3"></textarea></label>
+      <label class="field" for="fSurprises"><span class="lbl">Сюрпризы: что оказалось не так, как ждали</span><textarea id="fSurprises" rows="2"></textarea></label>
+      <label class="field" for="fQuestions"><span class="lbl">Вопросы к следующей поездке (допишутся в карточку места)</span><textarea id="fQuestions" rows="2"></textarea></label>
       <label class="field" for="fVeto"><span class="lbl">Вето: место отпадает совсем, потому что…</span><input type="text" id="fVeto" autocomplete="off" placeholder="оставьте пустым, если вето нет"></label>
-      <label class="field" for="fSurprises"><span class="lbl">Сюрпризы и вопросы к следующей поездке</span><textarea id="fSurprises" rows="3"></textarea></label>
     </div>
     <div class="panel fcard"><div class="btns">
       <button type="button" class="btn ghost" id="fReset">Очистить форму</button>
@@ -120,21 +138,33 @@ export class RateForm {
     return false;
   }
 
+  showAll() {
+    const before = new Set([...this.el.querySelectorAll("[data-q]:not([hidden])")].map(q => q.dataset.q));
+    this.onlyStar = false; local.set("onlyStar", false); this.sync();
+    const first = [...this.el.querySelectorAll("[data-q]")].find(q => !q.hidden && !q.closest("[hidden]") && !before.has(q.dataset.q));
+    if (first) first.scrollIntoView({ block: "center" });
+  }
+
   onClick(e) {
     const b = e.target.closest("button");
     if (!b || b.type === "submit") return;
     const f = this.form;
     if (b.id === "fReset") {
       if (!this.arm("reset")) return;
-      this.form = Object.assign(emptyForm(), { id: f.id, createdAt: f.createdAt, who: f.who, place: f.place });
+      this.form = Object.assign(emptyForm(f.who), { id: f.id, createdAt: f.createdAt, place: f.place, _oid: f._oid, _orig: f._orig });
       this.persist(); this.sync(); this.msg("Форма очищена");
       return;
     }
-    if (b.id === "fCancel") { this.form = emptyForm(); this.armed = ""; this.persist(); this.setPlaces(this.places); this.msg("Правка отменена"); return; }
+    if (b.id === "fCancel") { delete this.drafts[keyOf(f)]; this.form = emptyForm(f.who); this.armed = ""; this.persist(); this.setPlaces(this.places); this.msg("Правка отменена"); return; }
+    if (b.id === "fNew") { this.switchTo(this.drafts._new || emptyForm(f.who)); window.scrollTo(0, 0); return; }
     if (b.id === "fDelete") { this.remove(); return; }
-    if (b.id === "fShowAll") { this.onlyStar = false; local.set("onlyStar", false); this.sync(); return; }
+    if (b.id === "fShowAll") { this.showAll(); return; }
+    if (b.dataset.addnote) { this.notesOpen.add(b.dataset.addnote); this.sync(); $("note-" + b.dataset.addnote).focus(); return; }
     if (b.dataset.draft) { const d = this.drafts[b.dataset.draft]; if (d) this.switchTo(d); window.scrollTo(0, 0); return; }
-    if (b.dataset.dropdraft) { delete this.drafts[b.dataset.dropdraft]; this.persist(); this.sync(); return; }
+    if (b.dataset.dropdraft) {
+      if (!this.arm("drop:" + b.dataset.dropdraft)) return;
+      delete this.drafts[b.dataset.dropdraft]; this.persist(); this.sync(); return;
+    }
     if (b.dataset.editrating) { this.hooks.edit(b.dataset.editrating); return; }
     this.msg("");
     if (b.dataset.who) f.who = b.dataset.who;
@@ -155,17 +185,28 @@ export class RateForm {
     this.saveDraft(); this.sync();
   }
 
+  pickPlace(id) {
+    const f = this.form;
+    if (f.id || id === f.place) return;
+    if (!hasContent(f)) { this.switchTo(this.drafts[id] || Object.assign(emptyForm(f.who), { place: id })); return; }
+    if (this.drafts[id] && this.drafts[id] !== f) { this.drafts[id + "~" + Date.now().toString(36)] = this.drafts[id]; delete this.drafts[id]; }
+    if (this.drafts[keyOf(f)] === f) delete this.drafts[keyOf(f)];
+    f.place = id;
+    this.persist();
+  }
+
   onInput(e) {
     const t = e.target, f = this.form;
     if (t.dataset.note) f.notes[t.dataset.note] = t.value;
-    else if (t.id === "fPlace") f.place = t.value;
+    else if (t.id === "fPlace") { if (e.type !== "change") return; this.pickPlace(t.value); }
     else if (t.id === "fStart") f.start = t.value;
     else if (t.id === "fEnd") { f.end = t.value; if (f.end) f.retro = (Date.now() - new Date(f.end).getTime()) / 864e5 > 31; }
     else if (t.id === "fRetro") f.retro = t.checked;
     else if (t.id === "fVeto") f.veto = t.value;
     else if (t.id === "fReview") f.review = t.value;
     else if (t.id === "fSurprises") f.surprises = t.value;
-    else if (t.id === "fOnlyStar") { this.onlyStar = t.checked; local.set("onlyStar", this.onlyStar); }
+    else if (t.id === "fQuestions") f.questions = t.value;
+    else if (t.id === "fOnlyStar") { if (!t.checked) { this.showAll(); return; } this.onlyStar = true; local.set("onlyStar", true); }
     else return;
     if (e.type === "change" || t.tagName === "SELECT") this.msg("");
     this.saveDraft(); this.sync();
@@ -182,24 +223,26 @@ export class RateForm {
 
   startFor(placeId) {
     if (!this.form.id && this.form.place === placeId) return this.setPlaces(this.places);
-    this.switchTo(this.drafts[placeId] || Object.assign(emptyForm(), { place: placeId }));
+    this.switchTo(this.drafts[placeId] || Object.assign(emptyForm(this.form.who), { place: placeId }));
   }
 
   startNew() {
-    if (!this.form.id) return this.setPlaces(this.places);
-    this.switchTo(this.drafts._new || emptyForm());
+    const f = this.form;
+    if (!f.id || (hasContent(f) && changed(f))) return this.setPlaces(this.places);
+    this.switchTo(this.drafts._new || emptyForm(f.who));
   }
 
-  load(r) {
+  load(r, oid) {
     if (this.form.id === r.id) return this.setPlaces(this.places);
     const draft = this.drafts["edit:" + r.id];
-    if (draft) return this.switchTo(draft);
+    if (draft) { draft._oid = oid || draft._oid || null; return this.switchTo(draft); }
     const f = Object.assign(emptyForm(), {
       id: r.id, createdAt: r.createdAt || null, who: r.who, place: r.place, start: r.start || "", end: r.end || "",
       season: r.season || "", mode: r.mode || "", housing: r.housing || "", retro: !!r.retro, year: r.year == null ? null : r.year,
       veto: r.veto || "", review: r.review || "", surprises: r.surprises || "",
       scores: Object.assign({}, r.scores), conf: Object.assign({}, r.conf), notes: Object.assign({}, r.notes),
     });
+    f._oid = oid || null;
     f._orig = snap(f);
     this.switchTo(f);
   }
@@ -208,8 +251,8 @@ export class RateForm {
     const f = this.form, H = this.hooks;
     let html = "";
     const others = Object.keys(this.drafts).filter(k => k !== keyOf(f) && hasContent(this.drafts[k]));
-    if (others.length) html += `<div class="banner"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n})` : ""}</button> <button type="button" class="linkbtn muted" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик">×</button></span>`; }).join(" · ")}</div>`;
-    if (f.id) html += `<div class="edit-head"><span>Правка оценки: <b>${esc(H.placeName(f.place) || "?")}</b> · ${esc(f.who)}${f.start ? " · " + esc(datesRu(f.start, f.end)) : ""}</span></div>`;
+    if (others.length) html += `<div class="banner drafts"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; const armed = this.armed === "drop:" + k; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n})` : ""}</button><button type="button" class="chipx${armed ? " armed" : ""}" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик">${armed ? "Выбросить?" : "×"}</button></span>`; }).join("")}</div>`;
+    if (f.id) html += `<div class="edit-head"><span>Правка оценки: <b>${esc(H.placeName(f.place) || "?")}</b> · ${esc(f.who)}${f.start ? " · " + esc(datesRu(f.start, f.end)) : ""}</span><button type="button" class="btn ghost small" id="fNew">Новая оценка</button></div>`;
     else if (f.place && f.who) {
       const mine = H.myRating(f.place, f.who);
       if (mine) html += `<div class="banner">У вас уже есть оценка этого места${mine.start ? " за " + esc(datesRu(mine.start, mine.end)) : ""}. Если это новая поездка, заполняйте дальше. Если та же — <button type="button" class="linkbtn" data-editrating="${esc(mine.id)}">исправьте прежнюю</button>.</div>`;
@@ -238,9 +281,12 @@ export class RateForm {
     el.querySelectorAll("[data-q]").forEach(q => { q.hidden = this.onlyStar && q.dataset.star !== "1" && f.scores[q.dataset.q] == null; });
     this.GROUPS.forEach(({ g, cats }) => {
       const vis = cats.filter(c => !this.onlyStar || c.star || f.scores[c.key] != null);
-      const panel = el.querySelector(`[data-group="${g.key}"]`);
-      panel.hidden = !vis.length && !(f.notes[g.key] || "").trim();
-      $("gc-" + g.key).textContent = `· ${vis.filter(c => f.scores[c.key] != null).length} из ${vis.length}`;
+      const note = (f.notes[g.key] || "").trim();
+      el.querySelector(`[data-group="${g.key}"]`).hidden = !vis.length && !note;
+      $("gc-" + g.key).textContent = vis.length ? `· ${vis.filter(c => f.scores[c.key] != null).length} из ${vis.length}` : "";
+      const open = !!note || this.notesOpen.has(g.key);
+      el.querySelector(`[data-notebox="${g.key}"]`).hidden = !open;
+      el.querySelector(`[data-addnote="${g.key}"]`).hidden = open;
     });
     $("fShowAll").hidden = !this.onlyStar;
     el.querySelectorAll("[data-note]").forEach(t => { const v = f.notes[t.dataset.note] || ""; if (t.value !== v) t.value = v; });
@@ -248,8 +294,9 @@ export class RateForm {
     $("fPlace").disabled = !!f.id;
     $("fPlaceHint").hidden = !!f.id;
     setVal("fStart", f.start || ""); setVal("fEnd", f.end || "");
+    $("fEnd").min = f.start || "";
     $("fRetro").checked = !!f.retro; $("fOnlyStar").checked = this.onlyStar;
-    setVal("fVeto", f.veto); setVal("fReview", f.review); setVal("fSurprises", f.surprises);
+    setVal("fVeto", f.veto); setVal("fReview", f.review); setVal("fSurprises", f.surprises); setVal("fQuestions", f.questions || "");
     const n = Object.keys(f.scores).length;
     const stars = this.STAR_KEYS.filter(k => f.scores[k] != null).length;
     $("fCounts").textContent = `★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · ещё ${n - stars}` : ""}`;
@@ -267,34 +314,43 @@ export class RateForm {
 
   msg(text, err) { const m = $("fMsg"); m.textContent = text; m.classList.toggle("err", !!err); }
 
+  fail(text, target) {
+    if (target) target.scrollIntoView({ block: "center" });
+    this.msg(text, true);
+  }
+
   async save() {
     this.msg("");
     const f = this.form;
-    if (!f.who) return this.msg("Выберите, кто оценивает.", true);
-    if (!f.place || !this.places.some(p => p.id === f.place)) { $("fPlace").scrollIntoView({ block: "center" }); return this.msg("Выберите место.", true); }
-    if (!Object.keys(f.scores).length && f.year == null && !f.review.trim()) return this.msg("Поставьте хотя бы одну оценку.", true);
+    if (!f.who) return this.fail("Выберите, кто оценивает.", $("fWho"));
+    if (!f.place || !this.places.some(p => p.id === f.place)) return this.fail("Выберите место.", $("fPlace"));
+    if (f.start && f.end && f.end < f.start) return this.fail("«Уехали» раньше, чем «Приехали».", $("fEnd"));
+    if (!Object.keys(f.scores).length && f.year == null && !f.review.trim()) return this.fail("Поставьте хотя бы одну оценку.");
     const conf = {};
     Object.keys(f.conf).forEach(k => { if (f.scores[k] != null && f.conf[k] !== "B") conf[k] = f.conf[k]; });
     const notes = {};
     Object.keys(f.notes).forEach(k => { const v = (f.notes[k] || "").trim(); if (v) notes[k] = v; });
+    const isNew = !f.id;
+    if (isNew && !f.draftId) f.draftId = uid("r");
+    if (!f.stamp) f.stamp = new Date().toISOString();
     const body = {
-      id: f.id || undefined, place: f.place, who: f.who, start: f.start || null, end: f.end || null, days: daysBetween(f.start, f.end),
+      id: f.id || f.draftId, place: f.place, who: f.who, start: f.start || null, end: f.end || null, days: daysBetween(f.start, f.end),
       season: f.season, mode: f.mode, housing: f.housing, retro: !!f.retro, year: f.year,
       veto: f.veto.trim(), review: f.review.trim(), scores: Object.assign({}, f.scores), conf, notes, surprises: f.surprises.trim(),
-      createdAt: f.createdAt || undefined,
+      createdAt: f.createdAt || f.stamp, updatedAt: f.stamp,
     };
-    if (!body.id) delete body.id;
-    if (!body.createdAt) delete body.createdAt;
     this.saving = true; this.sync();
     try {
-      const res = await this.hooks.save(body);
-      local.set("me", f.who);
-      this.form = emptyForm(); this.armed = ""; this.persist();
+      const res = await this.hooks.save(body, { isNew, baseOid: f._oid || undefined, questions: (f.questions || "").trim() });
+      if (!local.get("me", "")) local.set("me", f.who);
+      if (this.drafts[keyOf(f)] === f) delete this.drafts[keyOf(f)];
+      if (this.form === f) { this.form = emptyForm(f.who); this.armed = ""; }
+      this.persist();
       this.saving = false; this.sync();
       this.hooks.saved(res, body.place);
     } catch (err) {
       this.saving = false; this.sync();
-      this.msg(err.message || "Не сохранилось", true);
+      this.msg(err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Ваши правки остались в форме: откройте оценку заново из досье и перенесите их." : err.message || "Не сохранилось", true);
     }
   }
 
@@ -302,10 +358,12 @@ export class RateForm {
     const f = this.form;
     if (!f.id || !this.arm("delete")) return;
     try {
-      await this.hooks.remove(f.id);
+      const r = await this.hooks.remove(f.id, f._oid);
       const place = f.place;
-      this.form = emptyForm(); this.persist(); this.sync();
-      this.hooks.removed(place);
-    } catch (err) { this.msg(err.message || "Не удалилось", true); }
+      if (this.drafts[keyOf(f)] === f) delete this.drafts[keyOf(f)];
+      if (this.form === f) this.form = emptyForm(f.who);
+      this.persist(); this.sync();
+      this.hooks.removed(place, r);
+    } catch (err) { this.msg(err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Откройте её заново из досье." : err.message || "Не удалилось", true); }
   }
 }

@@ -1,7 +1,7 @@
 import { blobOid } from "../../js/store.js";
 
 export function makeRemote(files) {
-  const state = { head: "h0", files: Object.assign({}, files), n: 0, offlineNext: 0, dropResponseNext: 0, log: [] };
+  const state = { head: "h0", files: Object.assign({}, files), n: 0, offlineNext: 0, dropResponseNext: 0, failNext: 0, log: [] };
   const commit = (adds, dels) => {
     for (const a of adds) state.files[a.path] = Buffer.from(a.contents, "base64").toString("utf8");
     for (const d of dels) delete state.files[d.path];
@@ -10,6 +10,7 @@ export function makeRemote(files) {
   const res = (status, body, headers = {}) => new Response(status === 304 ? null : (typeof body === "string" ? body : JSON.stringify(body)), { status, headers });
   const fetchImpl = async (url, opts) => {
     if (state.offlineNext > 0) { state.offlineNext--; throw new TypeError("Load failed"); }
+    if (state.failNext > 0) { state.failNext--; return new Response(JSON.stringify({ message: "Server Error" }), { status: 502 }); }
     const u = new URL(url);
     const h = opts.headers || {};
     state.log.push(opts.method + " " + u.pathname);

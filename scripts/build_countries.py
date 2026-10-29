@@ -28,63 +28,49 @@ ISO_FIX = {"XKX": "KOS", "OWID_KOS": "KOS", "OWID_CYN": "CYN"}
 
 WB_LIC = "CC BY 4.0"
 WGI_LIC = "WGI (World Bank), с атрибуцией"
+INFORM_URL = "https://drmkc.jrc.ec.europa.eu/inform-index"
+USD_SPAN = 5
+EURO_SWITCH = {"HRV": (2023, 7.5345), "BGR": (2026, 1.95583)}  # WB keeps pre-euro LCU per USD unconverted
 IND = [
-    dict(key="gdp_ppp", name="ВВП на душу по ППС", short="ВВП/душу", group="money", unit="$", fmt=0, dir=1,
-         scale={"type": "log", "step": 0.405}, source="World Bank WDI", code="NY.GDP.PCAP.PP.CD", cats=[]),
     dict(key="price_level", name="Уровень цен в стране (США = 100)", short="Цены", group="money", unit="", fmt=1, dir=-1,
          scale={"type": "log", "step": 0.405}, source="World Bank WDI", code="PA.NUS.PRVT.PLI", cats=["цены_услуги"],
-         note="по стране в целом, не по городу"),
-    dict(key="inflation5", name="Инфляция, среднее за 5 лет", short="Инфляция", group="money", unit="%", fmt=1, dir=-1,
-         scale={"type": "lin", "step": 4}, source="World Bank WDI", code="FP.CPI.TOTL.ZG", cats=["динамика_цен"],
-         note="среднее за 5 последних доступных лет; год — последний"),
-    dict(key="unemployment", name="Безработица", short="Безработ.", group="work", unit="%", fmt=1, dir=-1,
-         scale={"type": "lin", "step": 3}, source="World Bank WDI", code="SL.UEM.TOTL.ZS", cats=[]),
-    dict(key="life_exp", name="Ожидаемая продолжительность жизни", short="Жизнь", group="health", unit="лет", fmt=1, dir=1,
-         scale={"type": "lin", "step": 3}, source="World Bank WDI", code="SP.DYN.LE00.IN", cats=["больница"]),
+         note="страна в целом, вся корзина; зависит от курса рубля"),
+    dict(key="usd_prices", name="Рост цен в долларах, % в год (5 лет)", short="Цены в $", group="money", unit="%", fmt=1,
+         dir=-1, scale={"type": "lin", "step": 2}, source="World Bank WDI", code="FP.CPI.TOTL / PA.NUS.FCRF",
+         url="https://data.worldbank.org/indicator/FP.CPI.TOTL", cats=["динамика_цен"],
+         note="ИПЦ, пересчитанный в доллары по курсу: среднегодовой рост за 5 лет до указанного года"),
     dict(key="uhc", name="Охват медпомощью (UHC, 0–100)", short="Медпомощь", group="health", unit="", fmt=0, dir=1,
-         scale={"type": "lin", "step": 10}, source="World Bank WDI (WHO)", code="SH_UHC_SCI", cats=["больница"]),
+         scale={"type": "lin", "step": 10}, source="World Bank WDI (WHO)", code="SH_UHC_SCI", cats=["больница"],
+         note="охват гос. системы базовой помощью, не качество больниц"),
     dict(key="pm25", name="PM2.5, среднегодовое", short="PM2.5", group="climate", unit="мкг/м³", fmt=1, dir=-1,
          scale={"type": "abs", "points": [[5, 4.5], [12, 3], [20, 2], [35, 1]]},
          source="World Bank WDI", code="EN.ATM.PM25.MC.M3", cats=["воздух"], note="по стране в целом"),
-    dict(key="homicide", name="Убийства на 100 тыс. жителей", short="Убийства", group="safety", unit="", fmt=1, dir=-1,
-         scale={"type": "log", "step": 0.693}, source="World Bank WDI (UNODC)", code="VC.IHR.PSRC.P5", cats=["преступность"]),
-    dict(key="internet", name="Пользуются интернетом", short="Интернет", group="work", unit="%", fmt=0, dir=1,
-         scale={"type": "lin", "step": 10}, source="World Bank WDI (ITU)", code="IT.NET.USER.ZS", cats=[],
-         note="доля жителей, не скорость"),
+    dict(key="homicide", name="Убийства на 100 тыс. жителей, среднее за 5 лет", short="Убийства", group="safety",
+         unit="", fmt=1, dir=-1, scale={"type": "log", "step": 0.693}, source="World Bank WDI (UNODC)",
+         code="VC.IHR.PSRC.P5", cats=["преступность"],
+         note="убийства — единственная сопоставимая цифра; бытовую преступность не отражает"),
     dict(key="wgi_pv", name="Политическая стабильность (WGI)", short="Стабильн.", group="safety", unit="", fmt=2, dir=1,
          scale={"type": "lin", "step": 0.5}, source="World Bank WGI", code="GOV_WGI_PV.EST", cats=["стабильность"]),
-    dict(key="wgi_rl", name="Верховенство права (WGI)", short="Право", group="safety", unit="", fmt=2, dir=1,
-         scale={"type": "lin", "step": 0.5}, source="World Bank WGI", code="GOV_WGI_RL.EST", cats=[]),
-    dict(key="wgi_cc", name="Контроль коррупции (WGI)", short="Коррупция", group="legal", unit="", fmt=2, dir=1,
-         scale={"type": "lin", "step": 0.5}, source="World Bank WGI", code="GOV_WGI_CC.EST", cats=["бюрократия"]),
-    dict(key="wgi_ge", name="Эффективность госуправления (WGI)", short="Госуправл.", group="legal", unit="", fmt=2, dir=1,
-         scale={"type": "lin", "step": 0.5}, source="World Bank WGI", code="GOV_WGI_GE.EST", cats=["бюрократия"]),
-    dict(key="hdi", name="Индекс человеческого развития", short="ИЧР", group="people", unit="", fmt=3, dir=1,
-         scale={"type": "lin", "step": 0.04}, source="UNDP HDR via Our World in Data", code="human-development-index",
-         license="CC BY 3.0 IGO", url="https://ourworldindata.org/grapher/human-development-index", cats=[]),
-    dict(key="happiness", name="Индекс счастья (WHR, 0–10)", short="Счастье", group="people", unit="", fmt=2, dir=1,
-         scale={"type": "lin", "step": 0.7}, source="World Happiness Report via Our World in Data",
-         code="happiness-cantril-ladder", license="WHR data sharing policy, с атрибуцией",
-         url="https://ourworldindata.org/grapher/happiness-cantril-ladder", cats=[]),
-    dict(key="democracy", name="Электоральная демократия (V-Dem, 0–1)", short="Демократия", group="people", unit="", fmt=2,
-         dir=1, scale={"type": "lin", "step": 0.12}, source="V-Dem via Our World in Data", code="electoral-democracy-index",
-         license="CC BY 4.0", url="https://ourworldindata.org/grapher/electoral-democracy-index", cats=["свободы"]),
-    dict(key="inform_risk", name="Риск кризисов и бедствий (INFORM, 0–10)", short="INFORM", group="safety", unit="",
-         fmt=1, dir=-1, scale={"type": "lin", "step": 1.0}, source="INFORM Risk (EC JRC)", code="INFORM",
-         license="CC BY (по HDX)", url="https://drmkc.jrc.ec.europa.eu/inform-index", cats=[]),
-    dict(key="inform_nat", name="Природные угрозы (INFORM, 0–10)", short="Стихии", group="safety", unit="", fmt=1,
-         dir=-1, scale={"type": "lin", "step": 1.0}, source="INFORM Risk (EC JRC)", code="HA.NAT",
-         license="CC BY (по HDX)", url="https://drmkc.jrc.ec.europa.eu/inform-index", cats=["стихии"],
-         note="землетрясения, наводнения, цунами, циклоны, засуха"),
+    dict(key="quake", name="Землетрясения (INFORM, по стране)", short="Землетряс.", group="safety", unit="", fmt=1,
+         dir=-1, scale={"type": "abs", "points": [[0, 3], [3, 2.75], [5, 2.25], [7, 1.75], [9, 1.25]]},
+         source="INFORM Risk (EC JRC)", code="HA.NAT.EQ", license="CC BY (по HDX)", url=INFORM_URL, cats=["стихии"],
+         note="по стране в целом; у СПб почти нулевой риск"),
+    dict(key="wgi_cc", name="Контроль коррупции (WGI, 0–100)", short="Коррупция", group="legal", unit="", fmt=0, dir=1,
+         scale={"type": "abs", "points": [[0, 1], [100, 5]]}, source="World Bank WGI", code="GOV_WGI_CC.SC",
+         cats=["бюрократия"], note="коррупция в целом, не миграционная бюрократия"),
+    dict(key="wgi_ge", name="Эффективность госуправления (WGI, 0–100)", short="Госуправл.", group="legal", unit="", fmt=0,
+         dir=1, scale={"type": "abs", "points": [[0, 1], [100, 5]]}, source="World Bank WGI", code="GOV_WGI_GE.SC",
+         cats=["бюрократия"], note="качество госуправления в целом"),
+    dict(key="free_speech", name="Свобода слова (V-Dem, 0–1)", short="Свобода слова", group="people", unit="", fmt=2,
+         dir=1, scale={"type": "lin", "step": 0.38}, source="V-Dem via Our World in Data",
+         code="freedom-of-expression-index", license="CC BY 4.0",
+         url="https://ourworldindata.org/grapher/freedom-of-expression-index", cats=["свободы"]),
     dict(key="ru_visa", name="Безвиз для паспорта РФ", short="Безвиз РФ", group="legal", unit="дн.", fmt=0, dir=1,
          scale={"type": "abs", "points": [[0, 1], [30, 3], [90, 4], [180, 5]]}, source="passport-index-data",
          code="RUS → страна", license="MIT", url="https://github.com/imorte/passport-index-data", cats=[],
          note="0 — нужна виза или e-visa; третий элемент — режим въезда"),
-    dict(key="passport_power", name="Сила паспорта страны (безвиз/VOA/eTA)", short="Паспорт", group="legal",
-         unit="стран", fmt=0, dir=1, scale={"type": "abs", "points": [[40, 1], [80, 2], [115, 3], [145, 4], [165, 5]]},
-         source="passport-index-data", code="страна → мир", license="MIT",
-         url="https://github.com/imorte/passport-index-data", cats=["гражданство"]),
 ]
+WB_N = {"homicide": 5}
 for i in IND:
     if i["source"].startswith("World Bank"):
         i.setdefault("license", WGI_LIC if "WGI" in i["source"] else WB_LIC)
@@ -185,33 +171,54 @@ def inform_series(fx, indicator):
     raise RuntimeError("INFORM: no workflow found")
 
 
+def usd_price_growth(fx, span=USD_SPAN):
+    """CAGR of the price level in US dollars (CPI / LCU per USD) over the latest `span` years both exist.
+    A yearly jump of 3x either way is a redenomination or an official-rate reset, not prices: country skipped."""
+    cpi, rate = wb_series(fx, "FP.CPI.TOTL", 12), wb_series(fx, "PA.NUS.FCRF", 12)
+    out, breaks = {}, []
+    for c, rows in cpi.items():
+        y0, k = EURO_SWITCH.get(c, (0, 1))
+        lc = {y: v / k if y < y0 else v for y, v in rate.get(c, [])}
+        usd = {y: v / lc[y] for y, v in rows if lc.get(y, 0) > 0 and v > 0}
+        end = next((y for y in sorted(usd, reverse=True) if y - span in usd), None)
+        if end is None:
+            continue
+        ys = [y for y in sorted(usd) if end - span <= y <= end]
+        if any(not 1 / 3 < usd[b] / usd[a] < 3 for a, b in zip(ys, ys[1:])):
+            breaks.append(c)
+            continue
+        out[c] = (end, ((usd[end] / usd[end - span]) ** (1 / span) - 1) * 100)
+    log(f"  usd_prices: skipped for breaks: {' '.join(sorted(breaks))}")
+    return out
+
+
 EASY = {"visa free", "visa on arrival", "eta"}
 DEFAULT_DAYS = {"visa free": 90, "visa on arrival": 30, "eta": 90}
+MONTHS = "january february march april may june july august september october november december".split()
 
 
 def passport_series(fx):
     readme = fx.get(f"{PASSPORT}/README.md").decode("utf-8")
-    m = re.search(r"Last updated:\s*\**\s*(\d{1,2}\s+\w+\s+(\d{4}))", readme)
-    year = int(m.group(2)) if m else dt.date.today().year
+    m = re.search(r"Last updated:\s*\**\s*(\d{1,2})\s+(\w+)\s+(\d{4})", readme)
+    year = int(m.group(3)) if m else dt.date.today().year
+    upd = f"{int(m.group(1)):02d}.{MONTHS.index(m.group(2).lower()) + 1:02d}.{year}" \
+        if m and m.group(2).lower() in MONTHS else str(year)
     text = fx.get(f"{PASSPORT}/passport-index-tidy-iso3.csv", timeout=120).decode("utf-8")
     rd = csv.reader(io.StringIO(text))
     next(rd)
-    power, ru = {}, {}
+    ru = {}
     for frm, to, req in rd:
         req = req.strip().lower()
-        if req == "-1":
+        if frm != "RUS" or req == "-1":
             continue
-        easy = req.isdigit() or req in EASY
-        power[frm] = power.get(frm, 0) + (1 if easy else 0)
-        if frm == "RUS":
-            if req.isdigit():
-                ru[to] = (year, float(req), "visa free")
-            elif req in DEFAULT_DAYS:
-                ru[to] = (year, float(DEFAULT_DAYS[req]), req)
-            else:
-                ru[to] = (year, 0.0, req)
+        if req.isdigit():
+            ru[to] = (year, float(req), "visa free")
+        elif req in DEFAULT_DAYS:
+            ru[to] = (year, float(DEFAULT_DAYS[req]), req)
+        else:
+            ru[to] = (year, 0.0, req)
     ru["RUS"] = (year, 360.0, "home")
-    return {k: (year, float(v)) for k, v in power.items()}, ru, (m.group(1) if m else str(year))
+    return ru, upd
 
 
 def rnd(v, fmt):
@@ -236,13 +243,16 @@ def main():
     with ThreadPoolExecutor(max_workers=8) as ex:
         for i in IND:
             k, c = i["key"], i["code"]
-            if i["source"].startswith("World Bank"):
-                jobs[k] = ex.submit(wb_series, fx, c, 5 if k == "inflation5" else 1)
+            if k == "usd_prices":
+                jobs[k] = ex.submit(usd_price_growth, fx)
+            elif k == "ru_visa":
+                jobs[k] = ex.submit(passport_series, fx)
+            elif i["source"].startswith("World Bank"):
+                jobs[k] = ex.submit(wb_series, fx, c, WB_N.get(k, 1))
             elif "Our World in Data" in i["source"]:
                 jobs[k] = ex.submit(owid_series, fx, c)
-            elif k.startswith("inform"):
+            elif i["source"].startswith("INFORM"):
                 jobs[k] = ex.submit(inform_series, fx, c)
-        jobs["_passport"] = ex.submit(passport_series, fx)
 
         data, failed, notes = {}, [], {}
         for k, fut in jobs.items():
@@ -252,20 +262,23 @@ def main():
                 log(f"FAILED {k}: {e}")
                 failed.append(k)
                 continue
-            if k == "_passport":
-                power, ru, upd = res
-                data["passport_power"], data["ru_visa"] = power, ru
-                notes["passport"] = upd
-                continue
-            if k == "inflation5":
-                res = {c: (max(y for y, _ in v), sum(x for _, x in v[:5]) / len(v[:5])) for c, v in res.items()}
+            if k == "ru_visa":
+                res, notes["passport"] = res
+                i = next(x for x in IND if x["key"] == k)
+                i["note"] = f"{i['note']}; данные на {notes['passport']}"
+            elif k in WB_N:
+                avg = {}
+                for c, v in res.items():
+                    last = max(y for y, _ in v)
+                    win = [x for y, x in v if y >= max(MIN_YEAR, last - WB_N[k] + 1)]
+                    if win:
+                        avg[c] = (last, sum(win) / len(win))
+                res = avg
             elif isinstance(next(iter(res.values())), list):
                 res = {c: max(v) for c, v in res.items()}
             data[k] = res
             log(f"  {k}: {len(res)} raw codes")
 
-    if "_passport" in failed:
-        failed += ["ru_visa", "passport_power"]
     inds = [i for i in IND if i["key"] in data]
     countries = {}
     dropped = set()
