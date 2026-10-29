@@ -9,7 +9,7 @@ export class MapView {
     this.L = L;
     this.hooks = hooks;
     const touch = matchMedia("(pointer: coarse)").matches;
-    this.map = L.map(el, { zoomControl: !touch, attributionControl: false, worldCopyJump: true, minZoom: 2, maxZoom: 17, zoomSnap: 0.5, tapTolerance: 12 });
+    this.map = L.map(el, { zoomControl: !touch, attributionControl: false, worldCopyJump: true, minZoom: 2, maxZoom: 17, zoomSnap: 1, tapTolerance: 12 });
     L.control.attribution({ position: "topright", prefix: false }).addAttribution(ATTR).addTo(this.map);
     if (!touch) this.map.zoomControl.setPosition("bottomright");
     this.tiles = L.tileLayer(TILES, { maxZoom: 19, crossOrigin: false, className: "basemap" }).addTo(this.map);
@@ -26,7 +26,7 @@ export class MapView {
     this.map.on("zoomend", () => this.labels());
     this.map.on("click", e => { if (!e.originalEvent._handled) this.hooks.onBlank(e.latlng); });
     const view = this.restoreView();
-    if (view) this.map.setView(view.c, view.z); else this.map.setView([44, 22], 4);
+    if (view) this.map.setView(view.c, Math.round(view.z)); else this.map.setView([44, 22], 4);
     this.map.on("moveend", () => { try { localStorage.setItem("wtl:view", JSON.stringify({ c: this.map.getCenter(), z: this.map.getZoom() })); } catch (e) {} });
   }
 
