@@ -1,4 +1,4 @@
-const VERSION = "wtl-v5";
+const VERSION = "wtl-v6";
 const SHELL = [
   "./",
   "index.html",
@@ -38,7 +38,7 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET" || url.origin !== location.origin) return;
   e.respondWith(caches.open(VERSION).then(async cache => {
     const hit = await cache.match(req, { ignoreSearch: true });
-    const net = fetch(req, { cache: "no-cache" }).then(res => {
+    const net = fetch(req.url, { cache: "no-cache", credentials: "same-origin" }).then(res => {
       if (res.ok) cache.put(req, res.clone());
       return res;
     });
