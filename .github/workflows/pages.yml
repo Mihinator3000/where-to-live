@@ -3,6 +3,9 @@ name: Pages
 on:
   push:
     branches: [main]
+  workflow_run:
+    workflows: [world-data]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
