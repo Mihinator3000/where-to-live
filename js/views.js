@@ -111,6 +111,8 @@ export function radarSVG(M, p) {
   return `<svg viewBox="-36 0 ${S + 72} ${S + 8}" role="img" aria-label="Оценки по группам: ${esc(p.name)}">${g}</svg>`;
 }
 
+const CONF_TITLE = { A: "проверили в быту", B: "видели как туристы", C: "со слов живущих", D: "только по рейтингу" };
+
 export function notesText(M, notes) {
   return Object.keys(notes || {}).filter(k => notes[k]).map(k => `${(M.GROUP[k] && M.GROUP[k].name) || k}: ${notes[k]}`).join("\n");
 }
@@ -149,7 +151,7 @@ export function subtableHTML(M, p, showEmpty) {
       if (!has && !showEmpty) return;
       const conf = M.PEOPLE.map(w => M.confOf(p.id, w, c.key));
       const flags = M.catFlags(p, c.key).map(f => `<span class="sev ${f.sev}">${esc(f.short)}</span>`).join(" ");
-      rows.push(`<tr><td>${c.star ? '<span class="star" title="Минимум каждой поездки">★</span> ' : ""}${esc(c.name)}</td><td class="n vis" title="${c.vis === "●" ? "видно надёжно" : c.vis === "◐" ? "видно частично" : "туристу почти не видно"}">${c.vis}</td>${per.map((v, i) => `<td class="n">${fmt(v)}${v != null && conf[i] ? `<span class="c">${esc(conf[i])}</span>` : ""}</td>`).join("")}<td class="n">${fmt(res)}</td><td class="n">${fmt(dat)}</td><td class="n"><b>${fmt(fin)}</b></td><td>${flags}</td></tr>`);
+      rows.push(`<tr><td>${c.star ? '<span class="star" title="Минимум каждой поездки">★</span> ' : ""}${esc(c.name)}</td><td class="n vis" title="${c.vis === "●" ? "видно надёжно" : c.vis === "◐" ? "видно частично" : "туристу почти не видно"}">${c.vis}</td>${per.map((v, i) => `<td class="n">${fmt(v)}${v != null && conf[i] ? `<span class="c" title="${esc(CONF_TITLE[conf[i]] || "")}">${esc(conf[i])}</span>` : ""}</td>`).join("")}<td class="n">${fmt(res)}</td><td class="n">${fmt(dat)}</td><td class="n"><b>${fmt(fin)}</b></td><td>${flags}</td></tr>`);
     });
     if (rows.length) {
       any = true;

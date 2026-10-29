@@ -1,6 +1,7 @@
 import { $, esc, local, daysBetween } from "./util.js";
 
 const HALF = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+export const CONF = { A: "проверили в быту", B: "видели как туристы", C: "со слов живущих", D: "только по рейтингу" };
 const emptyForm = () => ({ id: null, createdAt: null, who: local.get("me", ""), place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", scores: {}, conf: {}, notes: {} });
 
 export class RateForm {
@@ -14,6 +15,7 @@ export class RateForm {
     this.form = Object.assign(emptyForm(), local.get("draft", {}));
     this.onlyStar = local.get("onlyStar", false);
     this.deleteArmed = false;
+    this.confOpen = null;
     this.saving = false;
     this.places = [];
     this.timer = null;
@@ -27,7 +29,7 @@ export class RateForm {
     const seg = (name, values) => values.map(v => `<button type="button" data-opt="${name}" data-val="${esc(v)}" aria-pressed="false">${esc(v)}</button>`).join("");
     let html = `<div class="panel fcard">
       <h3>Кто и где</h3>
-      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Шкала 1–5, где 3 — как в СПб. Пропускайте то, что не проверили.</span><span>Уверенность по умолчанию B — видели как туристы. Нажмите на неё, чтобы сменить: A — проверили в быту, C — со слов живущих, D — по рейтингу.</span></div>
+      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Шкала 1–5, где 3 — как в СПб. Пропускайте то, что не проверили.</span><span>Под поставленной оценкой видно, откуда мы это знаем: по умолчанию «видели как туристы». Если проверили в быту, знаем со слов живущих или только по рейтингу, нажмите и выберите.</span></div>
       <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div></div>
       <div class="field"><label class="lbl" for="fPlace">Место</label><select id="fPlace"></select><span class="small muted">Нет в списке — <a href="#/map">найдите на карте</a> и нажмите «Добавить место».</span></div>
       <div class="frow">
@@ -44,9 +46,11 @@ export class RateForm {
       html += `<div class="panel fcard" data-group="${g.key}"><h3>${esc(g.name)} <span class="gcount" id="gc-${g.key}"></span></h3><div>`;
       cats.forEach(c => {
         html += `<div class="q" data-q="${c.key}" data-star="${c.star ? 1 : 0}">
-          <div class="q-head"><span class="q-name">${c.star ? "★ " : ""}${esc(c.name)}</span><button type="button" class="conf" data-conf="${c.key}" hidden>уверенность B</button></div>
+          <div class="q-head"><span class="q-name">${c.star ? "★ " : ""}${esc(c.name)}</span></div>
           ${c.hint ? `<span class="q-hint">${esc(c.hint)}</span>` : ""}
           <div class="pick" role="group" aria-label="${esc(c.name)}">${HALF.map(v => `<button type="button" class="${v % 1 ? "half" : ""}" data-score="${c.key}" data-v="${v}" aria-label="${v}" aria-pressed="false">${v % 1 ? "½" : v}</button>`).join("")}</div>
+          <button type="button" class="conf" data-conf="${c.key}" aria-expanded="false" hidden></button>
+          <div class="conf-pick" data-confpick="${c.key}" role="group" aria-label="Откуда знаем" hidden>${Object.keys(CONF).map(l => `<button type="button" data-confset="${c.key}" data-l="${l}" aria-pressed="false">${CONF[l]}</button>`).join("")}</div>
         </div>`;
       });
       html += `</div><label class="field" for="note-${g.key}"><span class="lbl">Комментарий по группе</span><textarea id="note-${g.key}" data-note="${g.key}" rows="2"></textarea></label></div>`;
@@ -85,9 +89,11 @@ export class RateForm {
       const k = b.dataset.score, v = Number(b.dataset.v);
       if (f.scores[k] === v) { delete f.scores[k]; delete f.conf[k]; } else f.scores[k] = v;
     } else if (b.dataset.conf) {
-      const k = b.dataset.conf, order = ["B", "A", "C", "D"];
-      const next = order[(order.indexOf(f.conf[k] || "B") + 1) % order.length];
-      if (next === "B") delete f.conf[k]; else f.conf[k] = next;
+      this.confOpen = this.confOpen === b.dataset.conf ? null : b.dataset.conf;
+    } else if (b.dataset.confset) {
+      const k = b.dataset.confset;
+      if (b.dataset.l === "B") delete f.conf[k]; else f.conf[k] = b.dataset.l;
+      this.confOpen = null;
     } else if (b.dataset.year) {
       const v = Number(b.dataset.year);
       f.year = f.year === v ? null : v;
@@ -147,7 +153,15 @@ export class RateForm {
     el.querySelectorAll("[data-who]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.who === f.who)));
     el.querySelectorAll("[data-opt]").forEach(b => b.setAttribute("aria-pressed", String(f[b.dataset.opt] === b.dataset.val)));
     el.querySelectorAll("[data-score]").forEach(b => b.setAttribute("aria-pressed", String(f.scores[b.dataset.score] === Number(b.dataset.v))));
-    el.querySelectorAll("[data-conf]").forEach(b => { const k = b.dataset.conf; b.hidden = f.scores[k] == null; b.textContent = "уверенность " + (f.conf[k] || "B"); });
+    el.querySelectorAll("[data-conf]").forEach(b => {
+      const k = b.dataset.conf, l = f.conf[k] || "B";
+      b.hidden = f.scores[k] == null;
+      b.textContent = "откуда знаем: " + CONF[l];
+      b.classList.toggle("set", l !== "B");
+      b.setAttribute("aria-expanded", String(this.confOpen === k));
+    });
+    el.querySelectorAll("[data-confpick]").forEach(d => { const k = d.dataset.confpick; d.hidden = this.confOpen !== k || f.scores[k] == null; });
+    el.querySelectorAll("[data-confset]").forEach(b => b.setAttribute("aria-pressed", String((f.conf[b.dataset.confset] || "B") === b.dataset.l)));
     el.querySelectorAll("[data-year]").forEach(b => b.setAttribute("aria-pressed", String(f.year === Number(b.dataset.year))));
     el.querySelectorAll("[data-q]").forEach(q => { q.hidden = this.onlyStar && q.dataset.star !== "1"; });
     el.querySelectorAll("[data-note]").forEach(t => { const v = f.notes[t.dataset.note] || ""; if (t.value !== v) t.value = v; });

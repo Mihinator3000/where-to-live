@@ -1,4 +1,4 @@
-const VERSION = "wtl-v6";
+const VERSION = "wtl-v7";
 const SHELL = [
   "./",
   "index.html",
