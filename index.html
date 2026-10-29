@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://api.github.com https://nominatim.openstreetmap.org; font-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#f1f3f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1113" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Где жить">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Где жить</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/app.css">
+<script defer src="vendor/leaflet/leaflet.js"></script>
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="appbar">
+  <a class="brand" href="#/map">Где жить</a>
+  <nav class="tabs" aria-label="Разделы">
+    <a href="#/map" data-nav="map">Карта</a>
+    <a href="#/rank" data-nav="rank">Рейтинг</a>
+    <a href="#/places" data-nav="places">Места</a>
+    <a href="#/rate" data-nav="rate">Оценить</a>
+  </nav>
+  <div class="appbar-tools">
+    <button type="button" class="sync" id="syncBtn" title="Обновить данные"><i class="dot" id="syncDot"></i><span id="syncText">…</span></button>
+    <button type="button" class="iconbtn" id="themeBtn" aria-label="Тема: авто" title="Тема"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
+    <a class="iconbtn" href="#/settings" data-nav="settings" aria-label="Настройки" title="Настройки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></a>
+  </div>
+</header>
+
+<main id="main">
+  <section class="view map-view" id="v-map" hidden>
+    <div id="map" aria-label="Карта"></div>
+    <div class="map-top">
+      <form class="search" id="searchForm" role="search">
+        <input type="search" id="searchInput" placeholder="Найти город или место" autocomplete="off" enterkeyhint="search" aria-label="Поиск места">
+        <div class="search-results" id="searchResults" hidden></div>
+      </form>
+      <button type="button" class="chipbtn" id="layersBtn" aria-expanded="false" aria-controls="layersPanel">Слои</button>
+    </div>
+    <div class="layers panel" id="layersPanel" hidden></div>
+    <div class="legend-box" id="legendBox" hidden></div>
+    <div class="sheet" id="sheet" hidden>
+      <button type="button" class="sheet-grip" id="sheetGrip" aria-label="Свернуть или развернуть"></button>
+      <button type="button" class="sheet-close" id="sheetClose" aria-label="Закрыть">×</button>
+      <div class="sheet-body" id="sheetBody"></div>
+    </div>
+  </section>
+
+  <section class="view page" id="v-rank" hidden></section>
+  <section class="view page" id="v-places" hidden></section>
+  <section class="view page" id="v-place" hidden></section>
+  <section class="view page" id="v-rate" hidden><form id="rateForm" class="stack" novalidate></form></section>
+  <section class="view page" id="v-settings" hidden></section>
+</main>
+
+<nav class="bottomnav" aria-label="Разделы">
+  <a href="#/map" data-nav="map"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z M9 4v14 M15 6v14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Карта</span></a>
+  <a href="#/rank" data-nav="rank"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10 M12 20V4 M19 20v-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg><span>Рейтинг</span></a>
+  <a href="#/places" data-nav="places"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></svg><span>Места</span></a>
+  <a href="#/rate" data-nav="rate"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Оценить</span></a>
+</nav>
+
+<div id="tip" hidden></div>
+<div id="toast" role="status" hidden></div>
+<noscript>Нужен JavaScript.</noscript>
+</body>
+</html>

@@ -1,0 +1,720 @@
+{
+ "people": [
+  "Михаил",
+  "Вика"
+ ],
+ "groups": [
+  {
+   "key": "legal",
+   "name": "Легализация и гражданство",
+   "scale": "abs",
+   "risky": false
+  },
+  {
+   "key": "money",
+   "name": "Деньги и стоимость",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "work",
+   "name": "Работа",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "health",
+   "name": "Здоровье",
+   "scale": "rel",
+   "risky": true
+  },
+  {
+   "key": "safety",
+   "name": "Безопасность",
+   "scale": "rel",
+   "risky": true
+  },
+  {
+   "key": "climate",
+   "name": "Климат и свет",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "housing",
+   "name": "Жильё",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "city",
+   "name": "Город и быт",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "nature",
+   "name": "Природа и досуг",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "people",
+   "name": "Люди и общество",
+   "scale": "rel",
+   "risky": false
+  },
+  {
+   "key": "links",
+   "name": "Связь с миром",
+   "scale": "abs",
+   "risky": false
+  }
+ ],
+ "cats": [
+  {
+   "key": "гражданство",
+   "name": "Путь к гражданству",
+   "group": "legal",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — пути нет; 5 — быстро, двойное разрешено"
+  },
+  {
+   "key": "внж",
+   "name": "ВНЖ: основания, цена, отказы",
+   "group": "legal",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — оснований нет; 5 — просто и надёжно"
+  },
+  {
+   "key": "внж_вики",
+   "name": "ВНЖ и работа для Вики",
+   "group": "legal",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — только через брак/никак; 5 — свой путь"
+  },
+  {
+   "key": "налоги",
+   "name": "Налоги для резидента",
+   "group": "legal",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — тяжёлые/двойные; 5 — лёгкие и понятные"
+  },
+  {
+   "key": "бюрократия",
+   "name": "Бюрократия",
+   "group": "legal",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — хаос и поборы; 5 — онлайн и честно"
+  },
+  {
+   "key": "траектория",
+   "name": "Траектория страны",
+   "group": "legal",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — закручивает гайки; 5 — стабильно открыта"
+  },
+  {
+   "key": "аренда",
+   "name": "Аренда на год",
+   "group": "money",
+   "vis": "◐",
+   "star": true,
+   "form": true,
+   "hint": "по местным сайтам, не Airbnb; 3 — как в СПб по доле бюджета"
+  },
+  {
+   "key": "продукты",
+   "name": "Продукты (свой чек)",
+   "group": "money",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "чек из 15 позиций; 3 — как в СПб"
+  },
+  {
+   "key": "цены_услуги",
+   "name": "Кафе и услуги: цены",
+   "group": "money",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "кафе, стрижка, такси; 3 — как в СПб"
+  },
+  {
+   "key": "коммуналка",
+   "name": "Коммуналка, особенно зимой",
+   "group": "money",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "3 — как в СПб"
+  },
+  {
+   "key": "динамика_цен",
+   "name": "Инфляция, аренда, курс рубля",
+   "group": "money",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — цены бегут; 5 — стабильно"
+  },
+  {
+   "key": "банк",
+   "name": "Банк для паспорта РФ",
+   "group": "money",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "1 — не открыть; 5 — открыли за день"
+  },
+  {
+   "key": "интернет",
+   "name": "Интернет дома",
+   "group": "work",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "свой speedtest; 1 — созвоны рвутся; 5 — оптика 300+"
+  },
+  {
+   "key": "часовой_пояс",
+   "name": "Часовой пояс к Москве",
+   "group": "work",
+   "vis": "●",
+   "star": false,
+   "form": false,
+   "hint": "флаг «при текущей работе»"
+  },
+  {
+   "key": "где_работать",
+   "name": "Где работать вне дома",
+   "group": "work",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "кафе для ноутбука, коворкинги"
+  },
+  {
+   "key": "рабочий_стек",
+   "name": "Рабочий стек: что отваливается",
+   "group": "work",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "1 — без VPN никак; 5 — всё работает"
+  },
+  {
+   "key": "работа_вики",
+   "name": "Работа для Вики",
+   "group": "work",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — нет; 3 — частично; 5 — да"
+  },
+  {
+   "key": "медицина",
+   "name": "Частная медицина",
+   "group": "health",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "запись, язык врача, цена"
+  },
+  {
+   "key": "больница",
+   "name": "Серьёзный случай",
+   "group": "health",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "1 — лечиться летать; 5 — больница рядом и хорошая"
+  },
+  {
+   "key": "стоматология",
+   "name": "Стоматология",
+   "group": "health",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "цена, качество, язык"
+  },
+  {
+   "key": "аптеки",
+   "name": "Аптеки и наши препараты",
+   "group": "health",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "1 — нужного нет; 5 — всё есть без рецепта"
+  },
+  {
+   "key": "кожа",
+   "name": "Кожа по дневнику",
+   "group": "health",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "1 — сильно хуже; 3 — как в СПб; 5 — заметно лучше"
+  },
+  {
+   "key": "пыльца",
+   "name": "Пыльца против сенсибилизаций",
+   "group": "health",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "после ALEX2"
+  },
+  {
+   "key": "влажность",
+   "name": "Влажность, плесень, сухость",
+   "group": "health",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "сырость в квартире, сухой воздух"
+  },
+  {
+   "key": "жесткость_воды",
+   "name": "Жёсткость воды",
+   "group": "health",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "TDS-метр; 3 — как в СПб (мягкая)"
+  },
+  {
+   "key": "еда_аллергены",
+   "name": "Еда без аллергенов",
+   "group": "health",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "орехи и морепродукты в кухне"
+  },
+  {
+   "key": "улица",
+   "name": "Улица днём и вечером",
+   "group": "safety",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "1 — страшно; 3 — как в СПб; 5 — спокойно везде"
+  },
+  {
+   "key": "для_девушки",
+   "name": "Для девушки одной",
+   "group": "safety",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "оценка Вики главная"
+  },
+  {
+   "key": "преступность",
+   "name": "Реальная преступность",
+   "group": "safety",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  },
+  {
+   "key": "дороги",
+   "name": "Дороги и вождение",
+   "group": "safety",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "переходы, манера вождения"
+  },
+  {
+   "key": "стихии",
+   "name": "Стихийные риски",
+   "group": "safety",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "землетрясения, пожары, наводнения"
+  },
+  {
+   "key": "стабильность",
+   "name": "Политическая стабильность",
+   "group": "safety",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  },
+  {
+   "key": "климат",
+   "name": "Климат (наш сезон)",
+   "group": "climate",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "как ощущался в наш сезон; за год — по данным"
+  },
+  {
+   "key": "зима",
+   "name": "Зима",
+   "group": "climate",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "холод в квартирах, сырость, ветер"
+  },
+  {
+   "key": "лето",
+   "name": "Лето и жара",
+   "group": "climate",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "можно ли спать без кондиционера"
+  },
+  {
+   "key": "свет",
+   "name": "Свет зимой",
+   "group": "climate",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "длина дня в декабре, солнце ноябрь–февраль"
+  },
+  {
+   "key": "воздух",
+   "name": "Воздух",
+   "group": "climate",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "смог, печное отопление, пыль"
+  },
+  {
+   "key": "жара_2040",
+   "name": "Жара в 2040-х",
+   "group": "climate",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "дни выше +35 °C"
+  },
+  {
+   "key": "фонд",
+   "name": "Качество жилья",
+   "group": "housing",
+   "vis": "◐",
+   "star": true,
+   "form": true,
+   "hint": "отопление, изоляция, звукоизоляция, плесень"
+  },
+  {
+   "key": "рынок_аренды",
+   "name": "Рынок годовой аренды",
+   "group": "housing",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "предложение, залог, договор для ВНЖ"
+  },
+  {
+   "key": "покупка",
+   "name": "Покупка иностранцем",
+   "group": "housing",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  },
+  {
+   "key": "шум",
+   "name": "Шум у дома",
+   "group": "housing",
+   "vis": "◐",
+   "star": true,
+   "form": true,
+   "hint": "ночью, стройки, мопеды; замер дБА"
+  },
+  {
+   "key": "пешком",
+   "name": "Всё пешком за 15 минут",
+   "group": "city",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "магазин, аптека, кафе, парк"
+  },
+  {
+   "key": "транспорт",
+   "name": "Транспорт",
+   "group": "city",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "автобусы, такси, час пик, аэропорт"
+  },
+  {
+   "key": "чистота",
+   "name": "Чистота, мусор, бродячие животные",
+   "group": "city",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": ""
+  },
+  {
+   "key": "эстетика",
+   "name": "Эстетика: хочется гулять",
+   "group": "city",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "архитектура, зелень, визуальный мусор"
+  },
+  {
+   "key": "магазины",
+   "name": "Магазины и продукты",
+   "group": "city",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "свежие овощи, рыба, молочка, привычное"
+  },
+  {
+   "key": "доставка",
+   "name": "Доставка, маркетплейсы, посылки",
+   "group": "city",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "у СПб высокая база"
+  },
+  {
+   "key": "вода",
+   "name": "Вода из-под крана",
+   "group": "city",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "пить можно? летние перебои"
+  },
+  {
+   "key": "вне_сезона",
+   "name": "Жизнь вне сезона",
+   "group": "city",
+   "vis": "○",
+   "star": true,
+   "form": true,
+   "hint": "что открыто в январе; не были зимой — уверенность C"
+  },
+  {
+   "key": "авто",
+   "name": "Авто",
+   "group": "city",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "права РФ, цена машин, парковки"
+  },
+  {
+   "key": "море",
+   "name": "Море и пляжи",
+   "group": "nature",
+   "vis": "●",
+   "star": true,
+   "form": true,
+   "hint": "доступ, чистота воды, сезон купания"
+  },
+  {
+   "key": "горы",
+   "name": "Горы, парки, походы",
+   "group": "nature",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": ""
+  },
+  {
+   "key": "спорт",
+   "name": "Спорт круглый год",
+   "group": "nature",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "залы, бассейны, бег, вело"
+  },
+  {
+   "key": "кафе",
+   "name": "Кафе и рестораны",
+   "group": "nature",
+   "vis": "●",
+   "star": false,
+   "form": true,
+   "hint": "качество и выбор, ужин после 22:00"
+  },
+  {
+   "key": "культура",
+   "name": "Культура, события, ночная жизнь",
+   "group": "nature",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": ""
+  },
+  {
+   "key": "к_русским",
+   "name": "Отношение к русским",
+   "group": "people",
+   "vis": "◐",
+   "star": true,
+   "form": true,
+   "hint": "1 — враждебно; 5 — тепло"
+  },
+  {
+   "key": "дружелюбие",
+   "name": "Дружелюбие местных",
+   "group": "people",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "вне сферы услуг"
+  },
+  {
+   "key": "сообщество",
+   "name": "Русскоязычное сообщество",
+   "group": "people",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "размер, живость, пузырь"
+  },
+  {
+   "key": "язык",
+   "name": "Язык",
+   "group": "people",
+   "vis": "◐",
+   "star": true,
+   "form": true,
+   "hint": "английский в быту и у врача, сложность местного"
+  },
+  {
+   "key": "менталитет",
+   "name": "Менталитет и темп",
+   "group": "people",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "пунктуальность, договороспособность"
+  },
+  {
+   "key": "религиозность",
+   "name": "Религиозность в быту",
+   "group": "people",
+   "vis": "◐",
+   "star": false,
+   "form": true,
+   "hint": "алкоголь, рамадан, нормы; 5 — не мешает"
+  },
+  {
+   "key": "свободы",
+   "name": "Свободы и цензура",
+   "group": "people",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  },
+  {
+   "key": "друзья",
+   "name": "Друзья и круг общения",
+   "group": "people",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  },
+  {
+   "key": "рейсы_рф",
+   "name": "Прямые рейсы в РФ",
+   "group": "links",
+   "vis": "●",
+   "star": false,
+   "form": false,
+   "hint": "5 — как из СПб"
+  },
+  {
+   "key": "родители",
+   "name": "Приезд родителей",
+   "group": "links",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": "виза, время в пути"
+  },
+  {
+   "key": "аэропорт",
+   "name": "Аэропорт круглый год",
+   "group": "links",
+   "vis": "◐",
+   "star": false,
+   "form": false,
+   "hint": "направления зимой"
+  },
+  {
+   "key": "выходные",
+   "name": "Куда на выходные без визы",
+   "group": "links",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  },
+  {
+   "key": "консульство",
+   "name": "Консульство РФ",
+   "group": "links",
+   "vis": "○",
+   "star": false,
+   "form": false,
+   "hint": ""
+  }
+ ],
+ "options": {
+  "season": [
+   "пик",
+   "межсезон",
+   "худший"
+  ],
+  "mode": [
+   "отпуск",
+   "удалёнка",
+   "смешанно"
+  ],
+  "housing": [
+   "жилой район",
+   "центр",
+   "туристическая зона"
+  ]
+ },
+ "statuses": [
+  "кандидат",
+  "финалист",
+  "отсев",
+  "база"
+ ]
+}
