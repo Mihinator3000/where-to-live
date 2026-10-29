@@ -1,4 +1,4 @@
-const VERSION = "wtl-v2";
+const VERSION = "wtl-v3";
 const SHELL = [
   "./",
   "index.html",
@@ -29,7 +29,7 @@ self.addEventListener("install", e => {
 });
 
 self.addEventListener("activate", e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith("wtl-") && k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 self.addEventListener("fetch", e => {

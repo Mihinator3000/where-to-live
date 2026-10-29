@@ -337,3 +337,4 @@ thead th { font-weight: 500; color: var(--muted); font-size: 12px; border-bottom
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .basemap { filter: invert(1) hue-rotate(180deg) grayscale(0.75) brightness(0.82) contrast(0.88); } }
 #map .leaflet-top { top: 58px; }
 #map .leaflet-control-attribution { max-width: 70vw; }
+.linkbtn { border: 0; background: none; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }

@@ -16,8 +16,8 @@ export class MapView {
     this.map.createPane("countries").style.zIndex = 350;
     this.map.createPane("cities").style.zIndex = 450;
     this.map.createPane("places").style.zIndex = 620;
-    this.canvas = L.canvas({ padding: 0.3, pane: "countries" });
-    this.cityCanvas = L.canvas({ padding: 0.3, pane: "cities", tolerance: 6 });
+    this.canvas = L.canvas({ padding: 0.3, pane: "countries", tolerance: 6 });
+    this.cityCanvas = this.canvas;
     this.countryLayer = null;
     this.placeLayer = L.layerGroup().addTo(this.map);
     this.cityLayer = L.layerGroup().addTo(this.map);
@@ -46,6 +46,7 @@ export class MapView {
         layer.on("click", e => { e.originalEvent._handled = true; this.hooks.onCountry(f.properties.iso3, e.latlng); });
       },
     }).addTo(this.map);
+    this.cityLayer.eachLayer(l => l.bringToFront());
   }
 
   restyleCountries(styleFn) {
@@ -88,8 +89,8 @@ export class MapView {
       const col = colorFn(c);
       if (!col) return;
       const r = col.r || Math.max(3, Math.min(9, Math.sqrt((c.pop || 20000) / 1e6) * 4.5));
-      const m = L.circleMarker([c.lat, c.lon], { renderer: this.cityCanvas, pane: "cities", radius: r, color: col.stroke || "rgba(0,0,0,0.45)", weight: col.ring ? 2 : 0.8, fillColor: col.fill, fillOpacity: col.ring ? 0 : 0.9 });
-      m.bindTooltip(labelFn(c), { direction: "top", className: "city-tip", sticky: false });
+      const m = L.circleMarker([c.lat, c.lon], { renderer: this.cityCanvas, pane: "countries", radius: r, color: col.stroke || "rgba(0,0,0,0.45)", weight: col.ring ? 2 : 0.8, fillColor: col.fill, fillOpacity: col.ring ? 0 : 0.9 });
+      m.bindTooltip(esc(labelFn(c)), { direction: "top", className: "city-tip", sticky: false });
       m.on("click", e => { e.originalEvent._handled = true; this.hooks.onCity(c); });
       m.addTo(this.cityLayer);
     });

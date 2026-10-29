@@ -44,7 +44,7 @@ IND = [
     dict(key="uhc", name="Охват медпомощью (UHC, 0–100)", short="Медпомощь", group="health", unit="", fmt=0, dir=1,
          scale={"type": "lin", "step": 10}, source="World Bank WDI (WHO)", code="SH_UHC_SCI", cats=["больница"]),
     dict(key="pm25", name="PM2.5, среднегодовое", short="PM2.5", group="climate", unit="мкг/м³", fmt=1, dir=-1,
-         scale={"type": "abs", "points": [[5, 5], [10, 4], [15, 3.5], [25, 2], [35, 1]]},
+         scale={"type": "abs", "points": [[5, 4.5], [12, 3], [20, 2], [35, 1]]},
          source="World Bank WDI", code="EN.ATM.PM25.MC.M3", cats=["воздух"], note="по стране в целом"),
     dict(key="homicide", name="Убийства на 100 тыс. жителей", short="Убийства", group="safety", unit="", fmt=1, dir=-1,
          scale={"type": "log", "step": 0.693}, source="World Bank WDI (UNODC)", code="VC.IHR.PSRC.P5", cats=["преступность"]),

@@ -118,7 +118,7 @@ export function notesText(M, notes) {
 export function tripsHTML(M, p, editable) {
   if (M.isBase(p)) return `<p class="small muted">СПб — точка отсчёта: по бытовым группам 3 по определению. Позже сюда придут данные и отзывы, включая риски варианта «остаться».</p>`;
   const rs = M.ratingsOf(p.id).slice().sort((a, b) => String(b.start || b.updatedAt || "").localeCompare(String(a.start || a.updatedAt || "")));
-  const years = M.PEOPLE.map(w => { const y = M.latestYear(p.id, w); return `<span>${esc(w)}: <b>${y == null ? "—" : y}</b> / 10</span>`; }).join("");
+  const years = M.PEOPLE.map(w => { const y = M.latestYear(p.id, w); return `<span>${esc(w)}: <b>${y == null ? "—" : esc(y)}</b> / 10</span>`; }).join("");
   let html = `<div class="year"><span class="muted">Прожили бы здесь год?</span>${years}</div>`;
   if (!rs.length) html += `<p class="small muted">Оценок пока нет.</p>`;
   rs.forEach(r => {
@@ -149,7 +149,7 @@ export function subtableHTML(M, p, showEmpty) {
       if (!has && !showEmpty) return;
       const conf = M.PEOPLE.map(w => M.confOf(p.id, w, c.key));
       const flags = M.catFlags(p, c.key).map(f => `<span class="sev ${f.sev}">${esc(f.short)}</span>`).join(" ");
-      rows.push(`<tr><td>${c.star ? '<span class="star" title="Минимум каждой поездки">★</span> ' : ""}${esc(c.name)}</td><td class="n vis" title="${c.vis === "●" ? "видно надёжно" : c.vis === "◐" ? "видно частично" : "туристу почти не видно"}">${c.vis}</td>${per.map((v, i) => `<td class="n">${fmt(v)}${v != null && conf[i] ? `<span class="c">${conf[i]}</span>` : ""}</td>`).join("")}<td class="n">${fmt(res)}</td><td class="n">${fmt(dat)}</td><td class="n"><b>${fmt(fin)}</b></td><td>${flags}</td></tr>`);
+      rows.push(`<tr><td>${c.star ? '<span class="star" title="Минимум каждой поездки">★</span> ' : ""}${esc(c.name)}</td><td class="n vis" title="${c.vis === "●" ? "видно надёжно" : c.vis === "◐" ? "видно частично" : "туристу почти не видно"}">${c.vis}</td>${per.map((v, i) => `<td class="n">${fmt(v)}${v != null && conf[i] ? `<span class="c">${esc(conf[i])}</span>` : ""}</td>`).join("")}<td class="n">${fmt(res)}</td><td class="n">${fmt(dat)}</td><td class="n"><b>${fmt(fin)}</b></td><td>${flags}</td></tr>`);
     });
     if (rows.length) {
       any = true;

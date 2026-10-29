@@ -100,6 +100,7 @@ function bannerHTML() {
   if (d.status === "auth") return `<div class="banner err"><b>Токен не подходит.</b> ${esc(d.error)}. Проверьте его в <a href="#/settings">настройках</a>.</div>`;
   if (d.error && d.status !== "live") return `<div class="banner err">${esc(d.error)}</div>`;
   if (d.error) return `<div class="banner">${esc(d.error)}</div>`;
+  if (d.notice) return `<div class="banner err">${esc(d.notice)} <button type="button" class="linkbtn" data-dismiss-notice>Понятно</button></div>`;
   return "";
 }
 
@@ -410,7 +411,7 @@ function renderSettings() {
     </section>
     <section class="block"><h2>Доступ к данным</h2>
       <form class="panel pad stack" id="tokenForm">
-        <p class="small">Оценки хранятся в приватном репозитории GitHub. Сайт читает и пишет туда напрямую с этого устройства по токену. Токен хранится только здесь и уходит только на api.github.com.</p>
+        <p class="small">Оценки хранятся в приватном репозитории GitHub. Сайт читает и пишет туда напрямую с этого устройства по токену. Токен хранится на этом устройстве и уходит только на api.github.com. Открывайте приложение с иконки на экране «Домой»: так его хранилище отделено от других сайтов на github.io.</p>
         <label class="field"><span class="lbl">Репозиторий с данными</span><input type="text" name="repo" value="${esc(d.repo)}" spellcheck="false" autocapitalize="off"></label>
         <input type="text" name="username" value="where-to-live-${esc(slugMe())}" autocomplete="username" hidden>
         <label class="field"><span class="lbl">Fine-grained токен ${d.hasToken ? "(сохранён, введите новый, чтобы заменить)" : ""}</span><input type="password" name="token" placeholder="github_pat_…" spellcheck="false" autocapitalize="off" autocomplete="current-password"></label>
@@ -459,10 +460,10 @@ function renderSettings() {
     $("tokenMsg").className = "msg" + (d.status === "live" ? "" : " err");
     if (d.status === "live") toast("Подключено: данные загружены");
   });
-  $("forget")?.addEventListener("click", () => { d.forget(); toast("Токен и кэш удалены с этого устройства"); renderSettings(); });
+  $("forget")?.addEventListener("click", () => { d.forget(); state.form = null; toast(d.pending.length ? `Токен и кэш удалены. Неотправленные правки (${d.pending.length}) уйдут после нового токена` : "Токен и кэш удалены с этого устройства"); renderSettings(); });
   $("exportBtn").addEventListener("click", () => {
     const v = state.data.view();
-    const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), places: v.places, ratings: v.ratings, weights: v.weightDocs }, null, 1)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), places: v.places, ratings: v.ratings, weights: v.weightDocs, notSent: local.get("lost", []) }, null, 1)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `where-to-live-${new Date().toISOString().slice(0, 10)}.json`;
@@ -667,6 +668,7 @@ function initMap() {
     const b = e.target.closest("button[data-i]");
     if (!b) return;
     const item = state.searchItems[Number(b.dataset.i)];
+    searchSeq++;
     $("searchResults").hidden = true;
     $("searchInput").blur();
     if (item.type === "place") { openPlace(item.id, true); }
@@ -701,9 +703,10 @@ function renderMap() {
 }
 
 /* ---------- search ---------- */
-let searchTimer = null;
+let searchTimer = null, searchSeq = 0;
 function runSearch(q, remote) {
   const box = $("searchResults");
+  const seq = ++searchSeq;
   clearTimeout(searchTimer);
   if (!q) { box.hidden = true; return; }
   const ql = q.toLowerCase();
@@ -722,8 +725,9 @@ function runSearch(q, remote) {
   }
   show([], "Ищу в OpenStreetMap…");
   search(q).then(res => {
+    if (seq !== searchSeq) return;
     show(res.map(g => ({ type: "geo", geo: g, title: g.name, sub: g.label })), res.length ? "Поиск: Nominatim, данные © OpenStreetMap" : "Ничего не нашлось");
-  }).catch(err => show([], esc(err.message)));
+  }).catch(err => { if (seq === searchSeq) show([], esc(err.message)); });
 }
 
 /* ---------- sheet ---------- */
@@ -757,7 +761,7 @@ function openPlace(id, fly) {
     <div class="chips">${p.country ? `<span class="chip">${esc(p.country)}</span>` : ""}<span class="chip">${esc(p.status || "кандидат")}</span>${years ? `<span class="chip">год: ${esc(years)}</span>` : ""}<span class="chip">оценок: ${M.ratingsOf(p.id).length}</span></div>
     ${scoreLine(M, p)}
     ${rs.map(r => `<div class="review ${r.who === M.PEOPLE[1] ? "v" : "m"}"><b>${esc(r.who)}${r.start ? " · " + esc(r.start.slice(0, 7)) : ""}:</b> ${esc(r.review)}</div>`).join("")}
-    <div class="btns"><a class="btn" href="${placeHref(p.id)}">Досье</a>${M.isBase(p) ? "" : `<a class="btn ghost" href="#/rate/new/${encodeURIComponent(p.id)}">Оценить</a>`}<button type="button" class="btn ghost" data-act="simplace" data-id="${esc(p.id)}">Похожие</button></div>`);
+    <div class="btns"><a class="btn" href="${placeHref(p.id)}">Досье</a>${M.isBase(p) ? "" : `<a class="btn ghost" href="#/rate/new/${encodeURIComponent(p.id)}">Оценить</a>`}<button type="button" class="btn ghost" data-act="simplace" data-id="${esc(p.id)}">Похожие</button></div><div id="simPlaceBox"></div>`);
   if (fly && p.lat != null) state.mapView.flyTo(p.lat, p.lon, 10);
 }
 
@@ -856,12 +860,12 @@ async function onSheetClick(e) {
     if (!state.sim) state.sim = new Similar(Wd, state.schema.groups);
     let x, boxId;
     if (act === "simcity") { const c = state.sheet.city; x = { cc: c.cc, city: c, lat: c.lat, lon: c.lon }; state.layers.simTo = { type: "city", id: c.id }; boxId = "simCityBox"; }
-    else { const p = state.M.PLACE[b.dataset.id]; const city = Wd.placeCity(p); x = { cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }; state.layers.simTo = { type: "place", id: p.id }; boxId = null; }
+    else { const p = state.M.PLACE[b.dataset.id]; const city = Wd.placeCity(p); x = { cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }; state.layers.simTo = { type: "place", id: p.id }; boxId = "simPlaceBox"; }
     state.layers.city = "similar"; saveLayers();
     renderMap();
     const sp = state.sim.similarSplit(x, W(), { home: 3, abroad: 6 });
     const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(state.preset)}»</h2>` + similarSplitHTML(sp, x.cc);
-    if (boxId) $(boxId).innerHTML = html; else $("sheetBody").insertAdjacentHTML("beforeend", html);
+    if ($(boxId)) $(boxId).innerHTML = html;
   }
 }
 
@@ -911,14 +915,13 @@ async function boot() {
   });
   $("themeBtn").addEventListener("click", () => { const order = ["auto", "light", "dark"]; setTheme(order[(order.indexOf(local.get("theme", "auto")) + 1) % 3]); if (state.route.name === "settings") renderSettings(); });
   $("syncBtn").addEventListener("click", () => state.data.refresh());
+  document.addEventListener("click", e => { if (e.target.closest("[data-dismiss-notice]")) { state.data.notice = ""; state.data.emit(); } });
   addEventListener("hashchange", route);
   route();
   state.world.loadCities().then(() => { rebuild(); if (state.route.name === "place" || state.route.name === "map") render(); });
-  if (state.data.hasToken) {
-    await state.data.refresh();
-    setInterval(() => { if (document.visibilityState === "visible") state.data.poll(); }, 60000);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") state.data.poll(); });
-  }
+  setInterval(() => { if (document.visibilityState === "visible") state.data.poll(); }, 60000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") state.data.poll(); });
+  if (state.data.hasToken) await state.data.refresh();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 

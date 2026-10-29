@@ -15,12 +15,12 @@ const okArr = a => Array.isArray(a) && a.length === 12 && a.every(v => v != null
 export const CITY_INDICATORS = [
   { key: "t_jan", name: "Январь, средняя °C", short: "Январь", group: "climate", unit: "°C", fmt: 1, dir: 1, scale: { type: "lin", step: 3 }, cats: ["зима"], get: c => (okArr(c.t) ? c.t[0] : null) },
   { key: "t_jul", name: "Июль, средняя °C", short: "Июль", group: "climate", unit: "°C", fmt: 1, dir: 0, cats: [], get: c => (okArr(c.t) ? c.t[6] : null) },
-  { key: "tx_jul", name: "Июль, дневной максимум °C", short: "Жара июля", group: "climate", unit: "°C", fmt: 1, dir: -1, scale: { type: "abs", points: [[24, 4.5], [27, 4], [30, 3], [33, 2], [36, 1]] }, cats: ["лето"], get: c => c.tx },
+  { key: "tx_jul", name: "Июль, дневной максимум °C", short: "Жара июля", group: "climate", unit: "°C", fmt: 1, dir: -1, scale: { type: "abs", points: [[24, 3], [27, 2.75], [30, 2.25], [33, 1.75], [36, 1]] }, cats: ["лето"], get: c => c.tx },
   { key: "warm", name: "Месяцев со средней ≥ 18 °C", short: "Тёплых мес.", group: "climate", unit: "мес", fmt: 0, dir: 0, cats: [], get: c => (okArr(c.t) ? c.t.filter(v => v >= 18).length : null) },
   { key: "rain", name: "Осадки за год, мм", short: "Осадки", group: "climate", unit: "мм", fmt: 0, dir: 0, cats: [], get: c => (okArr(c.p) ? sum(c.p) : null) },
   { key: "cloud_win", name: "Облачность ноябрь–февраль, %", short: "Тучи зимой", group: "climate", unit: "%", fmt: 0, dir: -1, scale: { type: "lin", step: 8 }, cats: ["свет"], get: c => (okArr(c.c) ? (c.c[10] + c.c[11] + c.c[0] + c.c[1]) / 4 : null) },
   { key: "day_dec", name: "Световой день 21 декабря, ч", short: "Свет 21.12", group: "climate", unit: "ч", fmt: 1, dir: 1, scale: { type: "lin", step: 1.5 }, cats: ["свет"], get: c => daylight(c.lat) },
-  { key: "tz_msk", name: "Разница с Москвой зимой, ч", short: "Пояс", group: "work", unit: "ч", fmt: 0, dir: -1, scale: { type: "abs", points: [[0, 5], [1, 4.5], [2, 4], [4, 3], [6, 2], [8, 1]] }, cats: ["часовой_пояс"], get: c => (c.tz == null ? null : Math.abs(c.tz)) },
+  { key: "tz_msk", name: "Разница с Москвой зимой, ч", short: "Пояс", group: "work", unit: "ч", fmt: 0, dir: -1, scale: { type: "abs", points: [[0, 3], [1, 2.75], [2, 2.5], [4, 2], [6, 1.5], [8, 1]] }, cats: ["часовой_пояс"], get: c => (c.tz == null ? null : Math.abs(c.tz)) },
   { key: "air_km", name: "До крупного аэропорта, км", short: "Аэропорт", group: "links", unit: "км", fmt: 0, dir: -1, scale: { type: "abs", points: [[15, 5], [40, 4], [90, 3], [180, 2], [350, 1]] }, cats: ["аэропорт"], get: c => c.air },
   { key: "pop", name: "Население", short: "Население", group: "city", unit: "", fmt: 0, dir: 0, cats: [], get: c => c.pop || null },
 ];

@@ -15,7 +15,7 @@
   - INFORM Risk (EC JRC): общий риск `INFORM` (`inform_risk`) и природные угрозы `HA.NAT` (`inform_nat`), 0–10. Workflow ищется сам: последний `INFORM Risk <год>` в `workflows/GetByWorkflowGroup/INFORM<год>`. API рвёт соединения — в скрипте ретраи.
   - passport-index-data (MIT, github.com/imorte/passport-index-data, данные с passportindex.org): `ru_visa` — дни безвиза для паспорта РФ (`visa free` без срока → 90, `visa on arrival` → 30, `eta` → 90, виза и e-visa → 0; Россия = 360, «home»); `passport_power` — число стран без визы/VOA/eTA для паспорта этой страны.
 - Значения старше 2005 года (`MIN_YEAR`) отбрасываются: у малых территорий World Bank отдаёт замеры 1990-х.
-- Шкала 1–5 (`scale`), Россия = 3: `log` — 3 + dir·ln(x/x_RUS)/step, `lin` — 3 + dir·(x − x_RUS)/step, `abs` — кусочно-линейно по порогам; клип делает приложение.
+- Шкала 1–5 (`scale`), Россия = 3: `log` — 3 + dir·ln(x/x_RUS)/step, `lin` — 3 + dir·(x − x_RUS)/step, `abs` — кусочно-линейно по порогам; клип делает приложение. В группах «относительно СПб» (климат, работа) пороги `abs` подобраны так, чтобы Россия/СПб давали ≈ 3: PM2.5 12 мкг/м³ → 3.
 - `cats` — подкатегории методики, для которых показатель служит колонкой «данные». У части показателей есть поле `note` — оговорка для подсказки.
 
 ## cities.json — города и климат

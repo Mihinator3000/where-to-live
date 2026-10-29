@@ -44,7 +44,9 @@ export class GitHubStore {
     this.head = null;
     this.tree = null;
     this.oids = {};
+    this.docs = null;
     this.etag = null;
+    this.etagSha = null;
     this.mode = "graphql";
   }
 
@@ -108,15 +110,18 @@ export class GitHubStore {
     this.head = repo.ref.target.oid;
     this.tree = repo.ref.target.tree.oid;
     this.oids = oids;
+    this.docs = out;
     return { head: this.head, docs: out, oids, bad };
   }
 
   async remoteHead() {
     const res = await this.call("GET", `/repos/${this.owner}/${this.repo}/commits/${this.branch}`, null, Object.assign({ Accept: "application/vnd.github.sha" }, this.etag ? { "If-None-Match": this.etag } : {}));
-    if (res.status === 304) return this.head;
+    if (res.status === 304 && this.etagSha) return this.etagSha;
     if (!res.ok) throw new StoreError(res.status === 404 ? "access" : "http", "GitHub ответил " + res.status);
+    const sha = (await res.text()).trim();
     this.etag = res.headers.get("ETag");
-    return (await res.text()).trim();
+    this.etagSha = sha;
+    return sha;
   }
 
   async commitGraphql(changes, message) {
@@ -152,26 +157,49 @@ export class GitHubStore {
     return commit.sha;
   }
 
+  applyDocs(changes) {
+    if (!this.docs) return;
+    for (const c of changes) {
+      const [dir, file] = c.path.split("/");
+      if (!this.docs[dir]) continue;
+      const id = file.replace(/\.json$/, "");
+      this.docs[dir] = this.docs[dir].filter(d => d.id !== id);
+      if (c.content != null) {
+        const doc = JSON.parse(c.content);
+        doc.id = doc.id || id;
+        this.docs[dir].push(doc);
+      }
+    }
+  }
+
   async commit(changes, message) {
     if (!this.head) await this.load();
     for (let attempt = 0; attempt < 4; attempt++) {
-      const clash = changes.filter(c => c.baseOid !== undefined && (this.oids[c.path] || null) !== (c.baseOid || null));
-      if (clash.length) throw new StoreError("clash", "Это только что изменили с другого телефона: " + clash.map(c => c.path).join(", "));
+      const todo = [], clash = [];
+      for (const c of changes) {
+        const cur = this.oids[c.path] || null;
+        if (c.baseOid === undefined || cur === (c.baseOid || null)) { todo.push(c); continue; }
+        const done = c.content == null ? cur == null : cur === (await blobOid(c.content));
+        if (!done) clash.push(c.path);
+      }
+      if (clash.length) throw Object.assign(new StoreError("clash", "Это только что изменили с другого телефона: " + clash.join(", ")), { paths: clash });
+      if (!todo.length) return this.head;
       try {
         let oid;
         if (this.mode === "graphql") {
-          try { oid = await this.commitGraphql(changes, message); }
+          try { oid = await this.commitGraphql(todo, message); }
           catch (e) { if (e.code !== "forbidden") throw e; this.mode = "rest"; }
         }
         if (this.mode === "rest") {
           if (!this.tree) await this.load();
-          oid = await this.commitRest(changes, message);
+          oid = await this.commitRest(todo, message);
         }
         this.head = oid;
-        for (const c of changes) {
+        for (const c of todo) {
           if (c.content == null) delete this.oids[c.path];
           else this.oids[c.path] = await blobOid(c.content);
         }
+        this.applyDocs(todo);
         if (this.mode === "graphql") this.tree = null;
         return this.head;
       } catch (e) {

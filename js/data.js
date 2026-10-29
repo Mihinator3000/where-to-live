@@ -12,12 +12,15 @@ export class Data extends EventTarget {
     const cache = local.get("cache", null);
     this.docs = (cache && cache.docs) || { places: [], ratings: [], weights: [] };
     this.oids = (cache && cache.oids) || {};
+    this.head = (cache && cache.head) || null;
     this.loadedAt = (cache && cache.at) || null;
     this.pending = local.get("pending", []);
     this.status = "idle";
     this.error = "";
+    this.notice = "";
     this.store = null;
     this.busy = null;
+    this.chain = Promise.resolve();
     this.configure();
     addEventListener("online", () => this.refresh());
   }
@@ -35,10 +38,10 @@ export class Data extends EventTarget {
   forget() {
     local.del("token");
     local.del("cache");
-    local.del("pending");
+    local.del("draft");
     this.docs = { places: [], ratings: [], weights: [] };
     this.oids = {};
-    this.pending = [];
+    this.head = null;
     this.configure();
     this.emit();
   }
@@ -50,6 +53,21 @@ export class Data extends EventTarget {
   }
 
   emit() { this.dispatchEvent(new Event("change")); }
+
+  serial(fn) {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.catch(() => {});
+    return run;
+  }
+
+  adopt() {
+    const st = this.store;
+    if (!st || !st.docs) return;
+    this.docs = structuredClone(st.docs);
+    this.oids = Object.assign({}, st.oids);
+    this.head = st.head;
+    local.set("cache", { docs: this.docs, oids: this.oids, head: this.head, at: this.loadedAt });
+  }
 
   view() {
     const docs = { places: [...this.docs.places], ratings: [...this.docs.ratings], weights: [...this.docs.weights] };
@@ -67,30 +85,32 @@ export class Data extends EventTarget {
 
   oidOf(dir, id) { return this.oids[pathOf(dir, id)] || null; }
 
+  fail(e) {
+    this.status = e.code === "offline" ? "offline" : e.code === "auth" || e.code === "access" ? "auth" : "error";
+    this.error = e.message;
+  }
+
   async refresh() {
     if (!this.store) { this.status = "notoken"; this.emit(); return; }
     if (this.busy) return this.busy;
-    this.busy = (async () => {
+    this.busy = this.serial(async () => {
       this.status = "sync";
       this.emit();
       try {
         await this.flush();
         const res = await this.store.load();
-        this.docs = res.docs;
-        this.oids = res.oids;
         this.loadedAt = new Date().toISOString();
-        local.set("cache", { docs: this.docs, oids: this.oids, at: this.loadedAt });
+        this.adopt();
         this.status = this.pending.length ? "pending" : "live";
         this.error = res.bad.length ? "Не читаются файлы: " + res.bad.join(", ") : "";
       } catch (e) {
-        this.status = e.code === "offline" ? "offline" : "error";
-        this.error = e.message;
-        if (e.code === "auth" || e.code === "access") this.status = "auth";
+        this.adopt();
+        this.fail(e);
       } finally {
         this.busy = null;
         this.emit();
       }
-    })();
+    });
     return this.busy;
   }
 
@@ -98,7 +118,8 @@ export class Data extends EventTarget {
     if (!this.store || this.busy) return;
     try {
       const head = await this.store.remoteHead();
-      if (head !== this.store.head || this.pending.length) await this.refresh();
+      if (head !== this.head || this.pending.length || this.status === "error") await this.refresh();
+      else if (this.status === "offline") { this.status = "live"; this.error = ""; this.emit(); }
     } catch (e) {
       if (e.code === "offline" && this.status !== "offline") { this.status = "offline"; this.emit(); }
     }
@@ -106,46 +127,50 @@ export class Data extends EventTarget {
 
   async flush() {
     while (this.pending.length) {
-      const batch = this.pending.slice();
+      const n = this.pending.length;
+      const byPath = new Map();
+      this.pending.forEach(c => {
+        const b = byPath.get(c.path);
+        if (b) { b.content = c.content; b.messages.push(c.message); }
+        else byPath.set(c.path, { path: c.path, content: c.content, baseOid: c.baseOid, messages: [c.message] });
+      });
+      const batch = [...byPath.values()];
       try {
-        await this.store.commit(batch.map(c => ({ path: c.path, content: c.content, baseOid: c.baseOid })), batch.map(c => c.message).join("; ").slice(0, 200));
-        this.pending = this.pending.slice(batch.length);
-        local.set("pending", this.pending);
+        await this.store.commit(batch.map(c => ({ path: c.path, content: c.content, baseOid: c.baseOid })), batch.flatMap(c => c.messages).join("; ").slice(0, 200));
+        this.pending = this.pending.slice(n);
       } catch (e) {
-        if (e.code === "clash") {
-          this.pending = this.pending.slice(batch.length);
-          local.set("pending", this.pending);
-          this.error = e.message + ". Ваша версия не отправлена.";
-        }
-        throw e;
+        if (e.code !== "clash") throw e;
+        const lost = this.pending.filter(c => e.paths.includes(c.path));
+        local.set("lost", local.get("lost", []).concat(lost.map(c => Object.assign({ at: new Date().toISOString() }, c))).slice(-50));
+        this.pending = this.pending.filter(c => !e.paths.includes(c.path));
+        this.notice = "Не отправлено: это же изменили с другого телефона (" + e.paths.join(", ") + "). Ваша версия есть в экспорте JSON в настройках.";
       }
+      local.set("pending", this.pending);
+      this.adopt();
     }
   }
 
-  async write(changes, message) {
-    if (!this.store) throw new StoreError("notoken", "Сначала введите токен в настройках");
-    try {
-      if (this.pending.length) await this.flush();
-      await this.store.commit(changes, message);
-      changes.forEach(c => {
-        const [dir, file] = c.path.split("/");
-        const id = file.replace(/\.json$/, "");
-        this.docs[dir] = this.docs[dir].filter(d => d.id !== id);
-        if (c.content != null) this.docs[dir].push(JSON.parse(c.content));
-      });
-      this.oids = Object.assign({}, this.store.oids);
-      local.set("cache", { docs: this.docs, oids: this.oids, at: this.loadedAt });
-      this.status = "live";
-      this.emit();
-      return "sent";
-    } catch (e) {
-      if (e.code !== "offline") throw e;
-      changes.forEach(c => this.pending.push(Object.assign({ message }, c)));
-      local.set("pending", this.pending);
-      this.status = "pending";
-      this.emit();
-      return "queued";
-    }
+  write(changes, message) {
+    if (!this.store) return Promise.reject(new StoreError("notoken", "Сначала введите токен в настройках"));
+    return this.serial(async () => {
+      try {
+        await this.flush();
+        await this.store.commit(changes, message);
+        this.adopt();
+        this.status = "live";
+        this.error = "";
+        this.emit();
+        return "sent";
+      } catch (e) {
+        this.adopt();
+        if (e.code !== "offline") { this.fail(e); this.emit(); throw e; }
+        changes.forEach(c => this.pending.push(Object.assign({ message }, c)));
+        local.set("pending", this.pending);
+        this.status = "pending";
+        this.emit();
+        return "queued";
+      }
+    });
   }
 
   newPlaceId(name) {
