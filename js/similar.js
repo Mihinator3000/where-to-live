@@ -92,41 +92,43 @@ export class Similar {
   }
 
   distance(a, b, W, alpha = ALPHA) {
-    const parts = [];
-    let s = 0, ws = 0, wAll = 0;
+    const items = [];
     const gcount = (feats) => { const n = {}; feats.forEach(f => { n[f.group] = (n[f.group] || 0) + 1; }); return n; };
     const cN = gcount(this.cfeat), pN = gcount(this.pfeat);
-    const add = (w, d, name) => { wAll += w; if (d == null) return; s += w * d; ws += w; parts.push({ name, w, d }); };
-    this.cfeat.forEach((f, i) => {
-      const w = (W[f.group] || 0) / cN[f.group] * (1 - alpha);
+    const block = (list, share) => {
+      const tot = list.reduce((t, x) => t + x.w, 0);
+      if (tot > 0 && share > 0) list.forEach(x => items.push({ name: x.name, w: x.w / tot * share, d: x.d, kind: x.kind }));
+    };
+    block(this.cfeat.map((f, i) => {
       const av = a.cvec ? a.cvec[i] : null, bv = b.cvec ? b.cvec[i] : null;
-      add(w, av == null || bv == null ? null : Math.abs(av - bv), f.name);
-    });
+      return { name: f.name, kind: "c", w: (W[f.group] || 0) / cN[f.group], d: av == null || bv == null ? null : Math.abs(av - bv) };
+    }), 1 - alpha);
     if (alpha > 0) {
-      const climW = (W.climate || 0) * alpha;
-      this.pfeat.forEach((f, i) => {
-        const share = f.group === "climate" ? 0.2 : 1;
-        const w = (W[f.group] || 0) / (pN[f.group] || 1) * alpha * share;
+      const climW = W.climate || 0;
+      const pts = this.pfeat.map((f, i) => {
         const av = a.pvec ? a.pvec[i] : null, bv = b.pvec ? b.pvec[i] : null;
-        add(w, av == null || bv == null ? null : Math.abs(av - bv), f.name);
+        return { name: f.name, w: (W[f.group] || 0) / (pN[f.group] || 1) * (f.group === "climate" ? 0.2 : 1), d: av == null || bv == null ? null : Math.abs(av - bv) };
       });
       const ce = a.clim && b.clim ? this.climEuclid(a.clim, b.clim) : null;
-      add(climW * 0.6, ce == null ? null : Math.min(1, ce / this.climScale), "климат по месяцам");
-      const kd = a.kg && b.kg ? (a.kg === b.kg ? 0 : a.kg[0] === b.kg[0] ? 0.5 : 1) : null;
-      add(climW * 0.2, kd, "тип климата");
+      pts.push({ name: "климат по месяцам", w: climW * 0.6, d: ce == null ? null : Math.min(1, ce / this.climScale) });
+      pts.push({ name: "тип климата", w: climW * 0.2, d: a.kg && b.kg ? (a.kg === b.kg ? 0 : a.kg[0] === b.kg[0] ? 0.5 : 1) : null });
+      block(pts, alpha);
     }
+    let s = 0, ws = 0, wAll = 0;
+    const parts = [];
+    items.forEach(x => { wAll += x.w; if (x.d == null) return; s += x.w * x.d; ws += x.w; parts.push(x); });
     if (!ws || ws / wAll < 0.35) return null;
     return { d: s / ws, cov: ws / wAll, parts };
   }
 
-  explain(r) {
-    const sorted = r.parts.filter(p => p.w > 0).slice().sort((x, y) => x.d - y.d);
-    const close = sorted.filter(p => p.d <= 0.15).slice(0, 3).map(p => p.name);
-    const far = sorted.slice().reverse().filter(p => p.d >= 0.3).slice(0, 3).map(p => p.name);
+  explain(r, sameCountry = false) {
+    const parts = r.parts.filter(p => p.w > 0);
+    const close = parts.filter(p => p.d <= 0.15 && !(sameCountry && p.kind === "c")).sort((x, y) => y.w * (1 - y.d) - x.w * (1 - x.d)).slice(0, 3).map(p => p.name);
+    const far = parts.filter(p => p.d >= 0.3).sort((x, y) => y.w * y.d - x.w * x.d).slice(0, 3).map(p => p.name);
     return { close, far };
   }
 
-  similarCities(x, W, { k = 15, otherCountry = false } = {}) {
+  rankCities(x, W, otherCountry = false) {
     if (!this.ready) this.prepare();
     const a = this.profile(x);
     const out = [];
@@ -137,8 +139,27 @@ export class Similar {
       const r = this.distance(a, this.profile({ cc: c.cc, city: c }), W);
       if (r) out.push({ city: c, r });
     }
-    out.sort((p, q) => p.r.d - q.r.d);
-    return out.slice(0, k).map(o => Object.assign(o, { pct: Math.round((1 - o.r.d) * 100), why: this.explain(o.r) }));
+    return out.sort((p, q) => p.r.d - q.r.d);
+  }
+
+  finish(list, x) {
+    return list.map(o => Object.assign(o, { pct: Math.round((1 - o.r.d) * 100), why: this.explain(o.r, !!x.cc && o.city.cc === x.cc) }));
+  }
+
+  similarCities(x, W, { k = 15, otherCountry = false, perCountry = 0 } = {}) {
+    const out = this.rankCities(x, W, otherCountry);
+    const per = {};
+    const top = perCountry ? out.filter(o => (per[o.city.cc] = (per[o.city.cc] || 0) + 1) <= perCountry) : out;
+    return this.finish(top.slice(0, k), x);
+  }
+
+  similarSplit(x, W, { home = 3, abroad = 8, perCountry = 3 } = {}) {
+    const all = this.rankCities(x, W);
+    const per = {};
+    return {
+      home: this.finish(x.cc ? all.filter(o => o.city.cc === x.cc).slice(0, home) : [], x),
+      abroad: this.finish(all.filter(o => o.city.cc !== x.cc && (per[o.city.cc] = (per[o.city.cc] || 0) + 1) <= perCountry).slice(0, abroad), x),
+    };
   }
 
   similarCountries(cc, W, k = 10) {

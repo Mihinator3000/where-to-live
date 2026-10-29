@@ -280,6 +280,7 @@ thead th { font-weight: 500; color: var(--muted); font-size: 12px; border-bottom
 .sim { display: grid; gap: 0; }
 .sim-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .sim-row:first-child { border-top: 0; }
+.sim-h { margin: 12px 0 2px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .sim-row small { color: var(--muted); font-size: 12px; grid-column: 1 / -1; }
 .sim-row .pct { font-family: var(--f-mono); color: var(--ink-2); }
 .sim-row button, .sim-row a { all: unset; cursor: pointer; font-weight: 600; }

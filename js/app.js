@@ -248,6 +248,12 @@ function similarHTML(list, opts = {}) {
   }).join("")}</div>`;
 }
 
+function similarSplitHTML(sp, cc) {
+  const home = cc ? state.world.nameOf(cc) : "";
+  return (sp.home.length ? `<h3 class="sim-h">${esc(home ? "В стране: " + home : "Рядом")}</h3>` + similarHTML(sp.home) : "") +
+    `<h3 class="sim-h">В других странах</h3>` + similarHTML(sp.abroad);
+}
+
 function similarCountriesHTML(list) {
   if (!list || !list.length) return `<p class="small muted">Мало данных для сравнения.</p>`;
   return `<div class="sim">${list.map(x => `<div class="sim-row"><button type="button" data-country="${x.cc}">${esc(state.world.nameOf(x.cc))}</button><span class="pct">${x.pct}%</span>${x.why.close.length || x.why.far.length ? `<small>${esc([x.why.close.length ? "похожи: " + x.why.close.join(", ") : "", x.why.far.length ? "отличаются: " + x.why.far.join(", ") : ""].filter(Boolean).join(" · "))}</small>` : ""}</div>`).join("")}</div>`;
@@ -343,9 +349,9 @@ async function fillSimilar(p) {
   if (!state.sim) state.sim = new Similar(state.world, state.schema.groups);
   const city = state.world.placeCity(p);
   if (!p.cc && !city) { box.innerHTML = `<p class="small muted">У места нет координат и страны — сравнивать не с чем.</p>`; return; }
-  const list = state.sim.similarCities({ cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }, W(), { k: 10 });
+  const sp = state.sim.similarSplit({ cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }, W());
   if (!$("simBox")) return;
-  $("simBox").innerHTML = similarHTML(list) + `<div class="btns" style="margin-top:10px"><button type="button" class="btn ghost small" id="simMap">Показать на карте</button></div>`;
+  $("simBox").innerHTML = similarSplitHTML(sp, p.cc) + `<div class="btns" style="margin-top:10px"><button type="button" class="btn ghost small" id="simMap">Показать на карте</button></div>`;
   $("simBox").addEventListener("click", e => {
     const b = e.target.closest("[data-city]");
     if (b) { const c = state.world.cities.find(x => String(x.id) === b.dataset.city); if (c) { go("#/map"); setTimeout(() => openCity(c, true), 50); } }
@@ -542,9 +548,10 @@ function cityColorer() {
     const target = similarTarget();
     if (!target) return null;
     if (!state.sim) state.sim = new Similar(Wd, state.schema.groups);
-    const list = state.sim.similarCities(target.x, W(), { k: 60 });
+    const list = state.sim.similarCities(target.x, W(), { k: 60, perCountry: 8 });
     const pct = new Map(list.map(x => [x.city.id, x.pct]));
-    return { list: list.map(x => x.city), fn: c => { const p = pct.get(c.id); return p == null ? null : { fill: scoreHex(1 + (p - 40) / 15) }; }, label: c => `${c.n}: похоже на ${pct.get(c.id)}%`, legend: { title: `Похожие на «${target.name}»`, rel: true, lo: "меньше", hi: "больше" } };
+    const rank = new Map(list.map((x, i) => [x.city.id, list.length > 1 ? i / (list.length - 1) : 0]));
+    return { list: list.map(x => x.city), fn: c => { const q = rank.get(c.id); return q == null ? null : { fill: scoreHex(5 - 2 * q), r: 7 - 3 * q }; }, label: c => `${c.n}: похоже на ${pct.get(c.id)}%`, legend: { title: `Похожие на «${target.name}», топ-${list.length}`, ramp: [3, 3.5, 4, 4.5, 5].map(scoreHex), lo: "меньше", hi: "больше" } };
   }
   if (L.city === "predict") {
     const fn = predictor();
@@ -852,8 +859,8 @@ async function onSheetClick(e) {
     else { const p = state.M.PLACE[b.dataset.id]; const city = Wd.placeCity(p); x = { cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }; state.layers.simTo = { type: "place", id: p.id }; boxId = null; }
     state.layers.city = "similar"; saveLayers();
     renderMap();
-    const list = state.sim.similarCities(x, W(), { k: 8 });
-    const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(state.preset)}»</h2>` + similarHTML(list);
+    const sp = state.sim.similarSplit(x, W(), { home: 3, abroad: 6 });
+    const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(state.preset)}»</h2>` + similarSplitHTML(sp, x.cc);
     if (boxId) $(boxId).innerHTML = html; else $("sheetBody").insertAdjacentHTML("beforeend", html);
   }
 }

@@ -87,7 +87,7 @@ export class MapView {
     list.forEach(c => {
       const col = colorFn(c);
       if (!col) return;
-      const r = Math.max(3, Math.min(9, Math.sqrt((c.pop || 20000) / 1e6) * 4.5));
+      const r = col.r || Math.max(3, Math.min(9, Math.sqrt((c.pop || 20000) / 1e6) * 4.5));
       const m = L.circleMarker([c.lat, c.lon], { renderer: this.cityCanvas, pane: "cities", radius: r, color: col.stroke || "rgba(0,0,0,0.45)", weight: col.ring ? 2 : 0.8, fillColor: col.fill, fillOpacity: col.ring ? 0 : 0.9 });
       m.bindTooltip(labelFn(c), { direction: "top", className: "city-tip", sticky: false });
       m.on("click", e => { e.originalEvent._handled = true; this.hooks.onCity(c); });
