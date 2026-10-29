@@ -38,6 +38,12 @@ node --test tests/*.test.mjs
 python3 -m http.server 8765
 ```
 
+Живой тест против приватного репо: работает во временной ветке и удаляет её. Токен берётся из окружения.
+
+```bash
+WTL_TOKEN="$(gh auth token)" node tests/live-github.mjs
+```
+
 ## Источники
 
 Карта © участники OpenStreetMap, поиск Nominatim. Границы Natural Earth (public domain, de facto). Города GeoNames (CC BY 4.0). Климат CHELSA V2.1 (CC0). Показатели стран — World Bank (CC BY 4.0), Our World in Data и первоисточники (UNDP, WHR, V-Dem), INFORM, passport-index-data; подробности — `data/world/indicators.json` и страница настроек.
