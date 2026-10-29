@@ -62,14 +62,14 @@ export class GitHubStore {
     } catch (e) {
       throw new StoreError("offline", "Нет связи с GitHub");
     }
-    if (res.status === 401) throw new StoreError("auth", "Токен не подходит или истёк");
+    if (res.status === 401) throw new StoreError("auth", "Ключ доступа не подходит или истёк");
     if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) throw new StoreError("limit", "GitHub ограничил запросы, попробуйте через минуту");
     return res;
   }
 
   async gql(query, variables) {
     const res = await this.call("POST", "/graphql", { query, variables });
-    if (res.status === 403) throw new StoreError("forbidden", "Токену не хватает прав");
+    if (res.status === 403) throw new StoreError("forbidden", "Ключу доступа не хватает прав");
     if (!res.ok) throw new StoreError("http", "GitHub ответил " + res.status);
     const body = await res.json();
     if (body.errors && body.errors.length) {
@@ -77,7 +77,7 @@ export class GitHubStore {
       const types = body.errors.map(e => e.type || "").join(" ");
       if (/expected.*head|head.*expected|is at .* but expected/i.test(m) || /STALE_DATA/.test(types)) throw new StoreError("conflict", m);
       if (/FORBIDDEN/.test(types) || /not accessible by/i.test(m)) throw new StoreError("forbidden", m);
-      if (/NOT_FOUND/.test(types) || /could not resolve to a repository/i.test(m)) throw new StoreError("access", "Репозиторий не найден или токен без доступа к нему");
+      if (/NOT_FOUND/.test(types) || /could not resolve to a repository/i.test(m)) throw new StoreError("access", "Хранилище не найдено или у ключа нет к нему доступа");
       throw new StoreError("graphql", m);
     }
     return body.data;
@@ -86,7 +86,7 @@ export class GitHubStore {
   async load() {
     const data = await this.gql(READ, { owner: this.owner, name: this.repo, ref: "refs/heads/" + this.branch });
     const repo = data && data.repository;
-    if (!repo) throw new StoreError("access", "Репозиторий не найден или токен без доступа к нему");
+    if (!repo) throw new StoreError("access", "Хранилище не найдено или у ключа нет к нему доступа");
     if (!repo.ref) throw new StoreError("empty", "В репозитории нет ветки " + this.branch);
     const out = { places: [], ratings: [], weights: [] };
     const oids = {};
@@ -141,7 +141,7 @@ export class GitHubStore {
   async commitRest(changes, message) {
     const base = `/repos/${this.owner}/${this.repo}/git`;
     const json = async res => {
-      if (res.status === 403 || res.status === 404) throw new StoreError("forbidden", "Токену не хватает прав на запись (нужно Contents: Read and write)");
+      if (res.status === 403 || res.status === 404) throw new StoreError("forbidden", "Ключу доступа не хватает прав на запись (нужно Contents: Read and write)");
       if (!res.ok) throw new StoreError("http", "GitHub ответил " + res.status);
       return res.json();
     };

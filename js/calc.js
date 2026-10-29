@@ -106,7 +106,7 @@ export function createModel(schema, data, opts = {}) {
   const candidates = () => places.filter(p => p.status !== "отсев" && !isBase(p) && !vetoed(p));
 
   function ranksFor(W) {
-    const list = candidates().map(p => ({ p, t: total(p, W, "final") })).filter(x => x.t.score != null && x.t.coverage >= MIN_COVERAGE);
+    const list = candidates().filter(p => ratingsOf(p.id).length).map(p => ({ p, t: total(p, W, "final") })).filter(x => x.t.score != null && x.t.coverage >= MIN_COVERAGE);
     list.sort((a, b) => b.t.score - a.t.score);
     const r = {};
     list.forEach((x, i) => { r[x.p.id] = i + 1; });

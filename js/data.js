@@ -151,7 +151,7 @@ export class Data extends EventTarget {
   }
 
   write(changes, message) {
-    if (!this.store) return Promise.reject(new StoreError("notoken", "Сначала введите токен в настройках"));
+    if (!this.store) return Promise.reject(new StoreError("notoken", "Сначала вставьте ключ доступа в настройках"));
     return this.serial(async () => {
       try {
         await this.flush();

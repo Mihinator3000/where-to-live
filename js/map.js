@@ -10,7 +10,7 @@ export class MapView {
     this.hooks = hooks;
     const touch = matchMedia("(pointer: coarse)").matches;
     this.map = L.map(el, { zoomControl: !touch, attributionControl: false, worldCopyJump: true, minZoom: 2, maxZoom: 17, zoomSnap: 1, tapTolerance: 12 });
-    L.control.attribution({ position: "topright", prefix: false }).addAttribution(ATTR).addTo(this.map);
+    L.control.attribution({ position: "bottomright", prefix: false }).addAttribution(ATTR).addTo(this.map);
     if (!touch) this.map.zoomControl.setPosition("bottomright");
     this.tiles = L.tileLayer(TILES, { maxZoom: 19, crossOrigin: false, className: "basemap" }).addTo(this.map);
     this.map.createPane("countries").style.zIndex = 350;
@@ -23,7 +23,8 @@ export class MapView {
     this.cityLayer = L.layerGroup().addTo(this.map);
     this.temp = null;
     this.styleFn = () => ({});
-    this.map.on("zoomend", () => this.labels());
+    this.placeList = [];
+    this.map.on("zoomend", () => { this.drawPlaces(); if (this.hooks.onZoom) this.hooks.onZoom(this.map.getZoom()); });
     this.map.on("click", e => { if (!e.originalEvent._handled) this.hooks.onBlank(e.latlng); });
     const view = this.restoreView();
     if (view) this.map.setView(view.c, Math.round(view.z)); else this.map.setView([44, 22], 4);
@@ -55,30 +56,60 @@ export class MapView {
   }
 
   setPlaces(list) {
-    const L = this.L;
+    this.placeList = list.filter(p => p.lat != null && p.lon != null);
+    this.drawPlaces();
+  }
+
+  drawPlaces() {
+    const L = this.L, z = this.map.getZoom();
     this.placeLayer.clearLayers();
     this.markers = {};
-    list.forEach(p => {
-      if (p.lat == null || p.lon == null) return;
-      const size = p.base ? 26 : 30;
-      const icon = L.divIcon({
-        className: "",
-        html: `<div class="pin${p.base ? " base" : ""}${p.out ? " out" : ""}" style="width:${size}px;height:${size}px;background:${p.color}">${esc(p.text || "")}</div>`,
-        iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
-      });
-      const m = L.marker([p.lat, p.lon], { icon, pane: "places", keyboard: true, title: p.name, riseOnHover: true });
-      m.bindTooltip(esc(p.name), { permanent: true, direction: "right", offset: [size / 2, 0], className: "pin-label" });
-      m.on("click", e => { if (e.originalEvent) e.originalEvent._handled = true; this.hooks.onPlace(p.id); });
-      m.addTo(this.placeLayer);
-      this.markers[p.id] = m;
+    const groups = [];
+    this.placeList.forEach(p => {
+      const pt = this.map.project([p.lat, p.lon], z);
+      const g = z < 12 && groups.find(x => x.pt.distanceTo(pt) < 32);
+      if (g) g.items.push(p); else groups.push({ pt, items: [p] });
     });
+    groups.forEach(g => (g.items.length === 1 ? this.addPin(g.items[0]) : this.addCluster(g.items)));
     this.labels();
+  }
+
+  addPin(p) {
+    const L = this.L;
+    const size = p.base ? 26 : 30;
+    const icon = L.divIcon({
+      className: "",
+      html: `<div class="pin${p.base ? " base" : ""}${p.out ? " out" : ""}" style="width:${size}px;height:${size}px;background:${p.color}">${esc(p.text || "")}</div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+    const m = L.marker([p.lat, p.lon], { icon, pane: "places", keyboard: true, title: p.name, riseOnHover: true });
+    m.bindTooltip(esc(p.base ? p.name + " · база, 3" : p.name), { permanent: true, direction: "right", offset: [size / 2, 0], className: "pin-label" });
+    m.isBase = !!p.base;
+    m.on("click", e => { if (e.originalEvent) e.originalEvent._handled = true; this.hooks.onPlace(p.id); });
+    m.addTo(this.placeLayer);
+    this.markers[p.id] = m;
+  }
+
+  addCluster(items) {
+    const L = this.L;
+    const lat = items.reduce((a, p) => a + p.lat, 0) / items.length, lon = items.reduce((a, p) => a + p.lon, 0) / items.length;
+    const icon = L.divIcon({ className: "", html: `<div class="pin cluster">${items.length}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
+    const m = L.marker([lat, lon], { icon, pane: "places", keyboard: true, title: items.map(p => p.name).join(", "), riseOnHover: true });
+    m.bindTooltip(esc(items.map(p => p.name).join(", ")), { direction: "right", offset: [17, 0], className: "pin-label" });
+    m.on("click", e => {
+      if (e.originalEvent) e.originalEvent._handled = true;
+      const b = L.latLngBounds(items.map(p => [p.lat, p.lon]));
+      const z = this.map.getZoom();
+      if (b.getNorthEast().equals(b.getSouthWest())) this.map.flyTo(b.getCenter(), Math.min(z + 3, 14));
+      else this.map.flyToBounds(b, { padding: [70, 70], maxZoom: Math.max(z + 2, 9), duration: 0.6 });
+    });
+    m.addTo(this.placeLayer);
   }
 
   labels() {
     const show = this.map.getZoom() >= 6;
-    Object.values(this.markers || {}).forEach(m => { const t = m.getTooltip(); if (t) t.setOpacity(show ? 1 : 0); });
+    Object.values(this.markers || {}).forEach(m => { const t = m.getTooltip(); if (t) t.setOpacity(show || m.isBase ? 1 : 0); });
   }
 
   setCities(list, colorFn, labelFn) {
