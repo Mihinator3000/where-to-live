@@ -31,6 +31,8 @@ export function toast(text) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
 }
 
+export const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many;
+
 export function daysBetween(a, b) {
   if (!a || !b) return null;
   const d = Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1;
@@ -42,13 +44,6 @@ export function scoreColor(v) {
   const d = Math.max(-1, Math.min(1, (v - 3) / 2));
   const pole = d >= 0 ? "var(--pos)" : "var(--neg)";
   return `color-mix(in oklab, ${pole} ${Math.round(25 + Math.abs(d) * 75)}%, var(--mid))`;
-}
-
-export function heatStyle(v) {
-  if (v == null) return "";
-  const d = Math.max(-1, Math.min(1, (v - 3) / 2));
-  const pole = d >= 0 ? "var(--pos)" : "var(--neg)";
-  return `background: color-mix(in oklab, ${pole} ${Math.round(Math.abs(d) * 100)}%, var(--mid))`;
 }
 
 export const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -68,4 +63,13 @@ export function scoreHex(v) {
   if (v == null) return p.none;
   const d = Math.max(-1, Math.min(1, (v - 3) / 2));
   return mixHex(p.mid, d >= 0 ? p.pos : p.neg, 0.25 + Math.abs(d) * 0.75);
+}
+
+const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const lumHex = h => { const [r, g, b] = hex2rgb(h).map(lin); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+export const inkOn = h => { const l = lumHex(h) + 0.05; return 1.05 / l >= l / 0.05 ? "#ffffff" : "#000000"; };
+export function heatHex(v) {
+  const p = pal();
+  const d = Math.max(-1, Math.min(1, (v - 3) / 2));
+  return mixHex(p.mid, d >= 0 ? p.pos : p.neg, Math.abs(d));
 }

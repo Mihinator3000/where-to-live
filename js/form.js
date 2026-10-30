@@ -7,7 +7,7 @@ const emptyForm = (who = local.get("me", "")) => ({ id: null, createdAt: null, w
 const keyOf = f => (f.id ? "edit:" + f.id : f.place || "_new");
 const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined, _oid: undefined }));
 const changed = f => !f.id || f._orig !== snap(f);
-const hasContent = f => Object.keys(f.scores).length > 0 || f.year != null || !!(f.review.trim() || f.surprises.trim() || f.veto.trim() || (f.questions || "").trim()) || Object.values(f.notes).some(v => v && v.trim());
+const hasContent = f => Object.keys(f.scores).length > 0 || f.year != null || !!(f.start || f.end || f.season || f.mode || f.housing) || !!(f.review.trim() || f.surprises.trim() || f.veto.trim() || (f.questions || "").trim()) || Object.values(f.notes).some(v => v && v.trim());
 const numRu = v => String(v).replace(".", ",");
 const hintText = h => h.replace(/уверенность ([ABCD])/g, (m, l) => `откуда знаем: «${CONF[l]}»`);
 
@@ -16,7 +16,7 @@ export function datesRu(start, end) {
   const p = s => { const [y, m, d] = String(s).split("-").map(Number); return { y, m, d }; };
   if (!start) return "";
   const a = p(start);
-  if (!end) return `${a.d} ${M[a.m - 1]} ${a.y}`;
+  if (!end || end === start) return `${a.d} ${M[a.m - 1]} ${a.y}`;
   const b = p(end);
   if (a.y === b.y && a.m === b.m) return `${a.d}–${b.d} ${M[a.m - 1]} ${a.y}`;
   if (a.y === b.y) return `${a.d} ${M[a.m - 1]} – ${b.d} ${M[b.m - 1]} ${a.y}`;
@@ -37,6 +37,7 @@ export class RateForm {
     this.armed = "";
     this.confOpen = null;
     this.notesOpen = new Set();
+    this.shown = new Set();
     this.saving = false;
     this.places = [];
     this.timer = null;
@@ -49,15 +50,17 @@ export class RateForm {
 
   stash() {
     const f = this.form, k = keyOf(f);
-    if (hasContent(f) && changed(f)) this.drafts[k] = f;
-    else if (this.drafts[k] === f) delete this.drafts[k];
+    if (hasContent(f) && changed(f)) this.drafts[this.drafts[k] && this.drafts[k] !== f ? k + "~" + Date.now().toString(36) : k] = f;
+    else this.drop(f);
   }
+
+  drop(f) { Object.keys(this.drafts).forEach(k => { if (this.drafts[k] === f) delete this.drafts[k]; }); }
 
   switchTo(next) {
     this.stash();
     this.form = next;
-    if (this.drafts[keyOf(next)] === next) delete this.drafts[keyOf(next)];
-    this.armed = ""; this.confOpen = null; this.notesOpen.clear();
+    this.drop(next);
+    this.armed = ""; this.confOpen = null; this.notesOpen.clear(); this.shown.clear();
     this.persist();
     this.setPlaces(this.places);
     this.msg("");
@@ -66,7 +69,7 @@ export class RateForm {
   reset() {
     this.form = emptyForm();
     this.drafts = {};
-    this.armed = ""; this.confOpen = null; this.notesOpen.clear();
+    this.armed = ""; this.confOpen = null; this.notesOpen.clear(); this.shown.clear();
     this.persist();
     this.sync();
   }
@@ -75,7 +78,7 @@ export class RateForm {
     const O = this.schema.options;
     const seg = (name, values, label = v => v) => values.map(v => `<button type="button" data-opt="${name}" data-val="${esc(v)}" aria-pressed="false">${esc(label(v))}</button>`).join("");
     const extra = this.schema.cats.filter(c => c.form && !c.star).length;
-    let html = `<div id="fTop"></div><div class="panel fcard">
+    let html = `<h1>Оценить поездку</h1><div id="fTop"></div><div class="panel fcard">
       <h3>Кто и где</h3>
       <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили: пустой ответ лучше догадки.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше. «Лучше» — значит лучше для нас: тише, чище, безопаснее.</span><span>Аренду, цены и жёсткость воды здесь не оцениваем: это цифры места, они вписываются один раз в его карточку.</span></div>
       <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает" id="fWho">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div></div>
@@ -122,6 +125,7 @@ export class RateForm {
     <div class="savebar">
       <span class="counts" id="fCounts"></span>
       <span class="msg" id="fMsg" role="status"></span>
+      <span class="msg" id="fNoKey" hidden>Сохранять можно после того, как <a href="#/settings">подключите данные в настройках</a>.</span>
       <button type="submit" class="btn" id="fSave">Сохранить</button>
     </div>`;
     this.el.innerHTML = html;
@@ -129,6 +133,7 @@ export class RateForm {
     this.el.addEventListener("input", e => this.onInput(e));
     this.el.addEventListener("change", e => this.onInput(e));
     this.el.addEventListener("submit", e => { e.preventDefault(); this.save(); });
+    this.el.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault(); });
   }
 
   arm(name) {
@@ -140,7 +145,7 @@ export class RateForm {
 
   showAll() {
     const before = new Set([...this.el.querySelectorAll("[data-q]:not([hidden])")].map(q => q.dataset.q));
-    this.onlyStar = false; local.set("onlyStar", false); this.sync();
+    this.onlyStar = false; local.set("onlyStar", false); this.shown.clear(); this.sync();
     const first = [...this.el.querySelectorAll("[data-q]")].find(q => !q.hidden && !q.closest("[hidden]") && !before.has(q.dataset.q));
     if (first) first.scrollIntoView({ block: "center" });
   }
@@ -155,11 +160,11 @@ export class RateForm {
       this.persist(); this.sync(); this.msg("Форма очищена");
       return;
     }
-    if (b.id === "fCancel") { delete this.drafts[keyOf(f)]; this.form = emptyForm(f.who); this.armed = ""; this.persist(); this.setPlaces(this.places); this.msg("Правка отменена"); return; }
+    if (b.id === "fCancel") { this.drop(f); this.form = emptyForm(f.who); this.armed = ""; this.persist(); this.setPlaces(this.places); this.msg("Правка отменена"); return; }
     if (b.id === "fNew") { this.switchTo(this.drafts._new || emptyForm(f.who)); window.scrollTo(0, 0); return; }
     if (b.id === "fDelete") { this.remove(); return; }
     if (b.id === "fShowAll") { this.showAll(); return; }
-    if (b.dataset.addnote) { this.notesOpen.add(b.dataset.addnote); this.sync(); $("note-" + b.dataset.addnote).focus(); return; }
+    if (b.dataset.addnote) { this.notesOpen.add(b.dataset.addnote); this.sync(); const t = $("note-" + b.dataset.addnote); t.focus({ preventScroll: true }); t.scrollIntoView({ block: "nearest" }); return; }
     if (b.dataset.draft) { const d = this.drafts[b.dataset.draft]; if (d) this.switchTo(d); window.scrollTo(0, 0); return; }
     if (b.dataset.dropdraft) {
       if (!this.arm("drop:" + b.dataset.dropdraft)) return;
@@ -183,6 +188,7 @@ export class RateForm {
       f.year = f.year === v ? null : v;
     } else return;
     this.saveDraft(); this.sync();
+    if (b.dataset.conf && this.confOpen) this.el.querySelector(`[data-confpick="${CSS.escape(this.confOpen)}"]`).scrollIntoView({ block: "nearest" });
   }
 
   pickPlace(id) {
@@ -190,7 +196,7 @@ export class RateForm {
     if (f.id || id === f.place) return;
     if (!hasContent(f)) { this.switchTo(this.drafts[id] || Object.assign(emptyForm(f.who), { place: id })); return; }
     if (this.drafts[id] && this.drafts[id] !== f) { this.drafts[id + "~" + Date.now().toString(36)] = this.drafts[id]; delete this.drafts[id]; }
-    if (this.drafts[keyOf(f)] === f) delete this.drafts[keyOf(f)];
+    this.drop(f);
     f.place = id;
     this.persist();
   }
@@ -206,7 +212,7 @@ export class RateForm {
     else if (t.id === "fReview") f.review = t.value;
     else if (t.id === "fSurprises") f.surprises = t.value;
     else if (t.id === "fQuestions") f.questions = t.value;
-    else if (t.id === "fOnlyStar") { if (!t.checked) { this.showAll(); return; } this.onlyStar = true; local.set("onlyStar", true); }
+    else if (t.id === "fOnlyStar") { if (!t.checked) { this.showAll(); return; } this.onlyStar = true; local.set("onlyStar", true); this.shown.clear(); }
     else return;
     if (e.type === "change" || t.tagName === "SELECT") this.msg("");
     this.saveDraft(); this.sync();
@@ -233,9 +239,13 @@ export class RateForm {
   }
 
   load(r, oid) {
-    if (this.form.id === r.id) return this.setPlaces(this.places);
-    const draft = this.drafts["edit:" + r.id];
-    if (draft) { draft._oid = oid || draft._oid || null; return this.switchTo(draft); }
+    if (this.form.id === r.id && (!oid || !this.form._oid || oid === this.form._oid)) return this.setPlaces(this.places);
+    if (this.form.id === r.id) { if (changed(this.form)) this.drafts["edit:" + r.id + "~" + Date.now().toString(36)] = this.form; this.form = emptyForm(this.form.who); }
+    const key = "edit:" + r.id, draft = this.drafts[key];
+    if (draft && oid && draft._oid && oid !== draft._oid) {
+      delete this.drafts[key];
+      if (changed(draft)) this.drafts[key + "~" + Date.now().toString(36)] = draft;
+    } else if (draft) { draft._oid = oid || draft._oid || null; return this.switchTo(draft); }
     const f = Object.assign(emptyForm(), {
       id: r.id, createdAt: r.createdAt || null, who: r.who, place: r.place, start: r.start || "", end: r.end || "",
       season: r.season || "", mode: r.mode || "", housing: r.housing || "", retro: !!r.retro, year: r.year == null ? null : r.year,
@@ -250,7 +260,7 @@ export class RateForm {
   topHTML() {
     const f = this.form, H = this.hooks;
     let html = "";
-    const others = Object.keys(this.drafts).filter(k => k !== keyOf(f) && hasContent(this.drafts[k]));
+    const others = Object.keys(this.drafts).filter(k => this.drafts[k] !== f && hasContent(this.drafts[k]));
     if (others.length) html += `<div class="banner drafts"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; const armed = this.armed === "drop:" + k; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n})` : ""}</button><button type="button" class="chipx${armed ? " armed" : ""}" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик">${armed ? "Выбросить?" : "×"}</button></span>`; }).join("")}</div>`;
     if (f.id) html += `<div class="edit-head"><span>Правка оценки: <b>${esc(H.placeName(f.place) || "?")}</b> · ${esc(f.who)}${f.start ? " · " + esc(datesRu(f.start, f.end)) : ""}</span><button type="button" class="btn ghost small" id="fNew">Новая оценка</button></div>`;
     else if (f.place && f.who) {
@@ -278,9 +288,10 @@ export class RateForm {
     el.querySelectorAll("[data-confpick]").forEach(d => { const k = d.dataset.confpick; d.hidden = this.confOpen !== k || f.scores[k] == null; });
     el.querySelectorAll("[data-confset]").forEach(b => b.setAttribute("aria-pressed", String((f.conf[b.dataset.confset] || "B") === b.dataset.l)));
     el.querySelectorAll("[data-year]").forEach(b => b.setAttribute("aria-pressed", String(f.year === Number(b.dataset.year))));
-    el.querySelectorAll("[data-q]").forEach(q => { q.hidden = this.onlyStar && q.dataset.star !== "1" && f.scores[q.dataset.q] == null; });
+    Object.keys(f.scores).forEach(k => this.shown.add(k));
+    el.querySelectorAll("[data-q]").forEach(q => { q.hidden = this.onlyStar && q.dataset.star !== "1" && !this.shown.has(q.dataset.q); });
     this.GROUPS.forEach(({ g, cats }) => {
-      const vis = cats.filter(c => !this.onlyStar || c.star || f.scores[c.key] != null);
+      const vis = cats.filter(c => !this.onlyStar || c.star || this.shown.has(c.key));
       const note = (f.notes[g.key] || "").trim();
       el.querySelector(`[data-group="${g.key}"]`).hidden = !vis.length && !note;
       $("gc-" + g.key).textContent = vis.length ? `· ${vis.filter(c => f.scores[c.key] != null).length} из ${vis.length}` : "";
@@ -310,6 +321,7 @@ export class RateForm {
     $("fSave").disabled = this.saving || !canWrite;
     $("fSave").textContent = this.saving ? "Сохраняю…" : f.id ? "Сохранить правку" : "Сохранить";
     $("fSave").title = canWrite ? "" : "Сначала подключите данные в настройках";
+    $("fNoKey").hidden = canWrite;
   }
 
   msg(text, err) { const m = $("fMsg"); m.textContent = text; m.classList.toggle("err", !!err); }
@@ -325,7 +337,7 @@ export class RateForm {
     if (!f.who) return this.fail("Выберите, кто оценивает.", $("fWho"));
     if (!f.place || !this.places.some(p => p.id === f.place)) return this.fail("Выберите место.", $("fPlace"));
     if (f.start && f.end && f.end < f.start) return this.fail("«Уехали» раньше, чем «Приехали».", $("fEnd"));
-    if (!Object.keys(f.scores).length && f.year == null && !f.review.trim()) return this.fail("Поставьте хотя бы одну оценку.");
+    if (!Object.keys(f.scores).length && f.year == null && !f.review.trim() && !f.veto.trim()) return this.fail("Поставьте хотя бы одну оценку.");
     const conf = {};
     Object.keys(f.conf).forEach(k => { if (f.scores[k] != null && f.conf[k] !== "B") conf[k] = f.conf[k]; });
     const notes = {};
@@ -343,8 +355,8 @@ export class RateForm {
     try {
       const res = await this.hooks.save(body, { isNew, baseOid: f._oid || undefined, questions: (f.questions || "").trim() });
       if (!local.get("me", "")) local.set("me", f.who);
-      if (this.drafts[keyOf(f)] === f) delete this.drafts[keyOf(f)];
-      if (this.form === f) { this.form = emptyForm(f.who); this.armed = ""; }
+      this.drop(f);
+      if (this.form === f) { this.form = emptyForm(f.who); this.armed = ""; this.shown.clear(); }
       this.persist();
       this.saving = false; this.sync();
       this.hooks.saved(res, body.place);
@@ -360,7 +372,7 @@ export class RateForm {
     try {
       const r = await this.hooks.remove(f.id, f._oid);
       const place = f.place;
-      if (this.drafts[keyOf(f)] === f) delete this.drafts[keyOf(f)];
+      this.drop(f);
       if (this.form === f) this.form = emptyForm(f.who);
       this.persist(); this.sync();
       this.hooks.removed(place, r);

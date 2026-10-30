@@ -21,7 +21,10 @@ export function createModel(schema, data, opts = {}) {
   const CAT = Object.fromEntries(CATS.map(c => [c.key, c]));
   const GROUP = Object.fromEntries(GROUPS.map(g => [g.key, g]));
   const STAR_KEYS = CATS.filter(c => c.star).map(c => c.key);
-  const autoData = opts.autoData || (() => null);
+  const autoRaw = opts.autoData || (() => null);
+  const autoCache = new Map(), groupCache = new Map();
+  const autoData = (p, key) => { const k = p.id + "|" + key; if (!autoCache.has(k)) autoCache.set(k, autoRaw(p, key)); return autoCache.get(k); };
+  const num = v => v != null && v !== "" && Number.isFinite(Number(v));
   const places = (data.places || []).filter(p => !p.deleted);
   const ids = new Set(places.map(p => p.id));
   const ratings = (data.ratings || []).filter(r => !r.deleted && r.place && r.who && ids.has(r.place));
@@ -48,7 +51,7 @@ export function createModel(schema, data, opts = {}) {
     if (cache.has(k)) return cache.get(k);
     let s = 0, w = 0;
     ratings.forEach(r => {
-      if (r.place === id && r.who === who && r.scores && r.scores[key] != null) { const x = rw(r); s += r.scores[key] * x; w += x; }
+      if (r.place === id && r.who === who && r.scores && num(r.scores[key])) { const x = rw(r); s += Number(r.scores[key]) * x; w += x; }
     });
     const v = w ? s / w : null;
     cache.set(k, v);
@@ -88,7 +91,9 @@ export function createModel(schema, data, opts = {}) {
 
   function groupScore(p, g, src) {
     if (isBase(p) && src === "final") return GROUP[g].scale === "rel" ? 3 : null;
-    return mean(CATS.filter(c => c.group === g).map(c => catValue(p, c.key, src)).filter(v => v != null));
+    const k = p.id + "|" + g + "|" + src;
+    if (!groupCache.has(k)) groupCache.set(k, mean(CATS.filter(c => c.group === g).map(c => catValue(p, c.key, src)).filter(v => v != null)));
+    return groupCache.get(k);
   }
 
   function total(p, W, src) {
@@ -139,7 +144,7 @@ export function createModel(schema, data, opts = {}) {
   }
 
   function confOf(id, who, key) {
-    const rs = ratings.filter(r => r.place === id && r.who === who && r.scores && r.scores[key] != null);
+    const rs = ratings.filter(r => r.place === id && r.who === who && r.scores && num(r.scores[key]));
     if (!rs.length) return "";
     const c = rs.map(r => (r.conf && r.conf[key]) || "B").sort();
     const worst = c[c.length - 1];

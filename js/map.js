@@ -1,4 +1,4 @@
-import { esc } from "./util.js";
+import { esc, plural } from "./util.js";
 
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://www.naturalearthdata.com/">Natural Earth</a>';
@@ -79,7 +79,7 @@ export class MapView {
     const size = p.base ? 26 : 30;
     const icon = L.divIcon({
       className: "",
-      html: `<div class="pin${p.base ? " base" : ""}${p.out ? " out" : ""}${p.thin ? " thin" : ""}${p.dark ? " dark" : ""}" style="width:${size}px;height:${size}px;${p.thin ? "border-color" : "background"}:${p.color}">${esc(p.text || "")}</div>`,
+      html: `<div class="pin${p.base ? " base" : ""}${p.out ? " out" : ""}${p.thin ? " thin" : ""}" style="width:${size}px;height:${size}px;${p.thin ? "border-color" : "background"}:${p.color}${!p.thin && p.ink ? ";color:" + p.ink : ""}">${esc(p.text || "")}</div>`,
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
     });
@@ -87,7 +87,9 @@ export class MapView {
     m.bindTooltip(esc(p.base ? p.name + " · база, 3" : p.name), { permanent: true, direction: "right", offset: [size / 2, 0], className: "pin-label" });
     m.isBase = !!p.base;
     m.on("click", e => { if (e.originalEvent) e.originalEvent._handled = true; this.hooks.onPlace(p.id); });
+    this.onKey(m, () => this.hooks.onPlace(p.id));
     m.addTo(this.placeLayer);
+    m.getElement().setAttribute("aria-label", p.name + (p.base ? ", база" : p.text ? ", итог " + p.text : ""));
     this.markers[p.id] = m;
   }
 
@@ -97,14 +99,28 @@ export class MapView {
     const icon = L.divIcon({ className: "", html: `<div class="pin cluster">${items.length}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] });
     const m = L.marker([lat, lon], { icon, pane: "places", keyboard: true, title: items.map(p => p.name).join(", "), riseOnHover: true });
     m.bindTooltip(esc(items.map(p => p.name).join(", ")), { direction: "right", offset: [17, 0], className: "pin-label" });
-    m.on("click", e => {
-      if (e.originalEvent) e.originalEvent._handled = true;
+    const open = () => {
       const b = L.latLngBounds(items.map(p => [p.lat, p.lon]));
       const z = this.map.getZoom();
       if (b.getNorthEast().equals(b.getSouthWest())) this.map.flyTo(b.getCenter(), Math.min(z + 3, 14));
       else this.map.flyToBounds(b, { padding: [70, 70], maxZoom: Math.max(z + 2, 9), duration: 0.6 });
-    });
+    };
+    m.on("click", e => { if (e.originalEvent) e.originalEvent._handled = true; open(); });
+    this.onKey(m, open);
     m.addTo(this.placeLayer);
+    m.getElement().setAttribute("aria-label", `${items.length} ${plural(items.length, "место", "места", "мест")} рядом: ${items.map(p => p.name).join(", ")}. Приблизить`);
+  }
+
+  onKey(m, fn) {
+    m.on("keypress", e => { const o = e.originalEvent; if (o.key === "Enter" || o.key === " " || o.keyCode === 13) { o._handled = true; o.preventDefault(); fn(); } });
+  }
+
+  keepVisible(lat, lon) {
+    const sheet = document.getElementById("sheet");
+    if (!sheet || sheet.hidden || lat == null) return;
+    const pt = this.map.latLngToContainerPoint([lat, lon]);
+    if (innerWidth < 860) { const top = sheet.offsetTop; if (pt.y > top - 40) this.map.panBy([0, pt.y - Math.max(90, top - 80)]); }
+    else { const right = sheet.offsetLeft + sheet.offsetWidth; if (pt.x < right + 20) this.map.panBy([pt.x - (right + 80), 0]); }
   }
 
   labels() {

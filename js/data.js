@@ -38,7 +38,6 @@ export class Data extends EventTarget {
   forget() {
     local.del("token");
     local.del("cache");
-    local.del("draft");
     this.docs = { places: [], ratings: [], weights: [] };
     this.oids = {};
     this.head = null;
@@ -159,11 +158,11 @@ export class Data extends EventTarget {
         const mine = changes.map(c => Object.assign({ message }, c));
         this.pending.push(...mine);
         local.set("pending", this.pending);
-        const lostBefore = this.lost.length;
+        const since = new Date().toISOString();
         try {
           await this.flush();
           const lost = this.lost;
-          const clashed = lost.slice(lostBefore).filter(l => mine.some(c => c.path === l.path));
+          const clashed = lost.filter(l => l.at >= since && mine.some(c => c.path === l.path));
           if (clashed.length) {
             local.set("lost", lost.filter(l => !clashed.includes(l)));
             if (this.lost.length === 0) this.notice = "";
@@ -197,6 +196,7 @@ export class Data extends EventTarget {
         return "sent";
       } catch (e) {
         this.adopt();
+        if (e.code === "clash") { this.emit(); throw e; }
         if (e.code !== "offline") { this.fail(e); this.emit(); throw e; }
         changes.forEach(c => this.pending.push(Object.assign({ message }, c)));
         local.set("pending", this.pending);

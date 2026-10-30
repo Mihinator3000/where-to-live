@@ -1,5 +1,5 @@
 import { fmt, MIN_COVERAGE } from "./calc.js";
-import { esc, heatStyle, scoreColor } from "./util.js";
+import { esc, heatHex, inkOn, scoreColor } from "./util.js";
 import { CONF, datesRu } from "./form.js";
 
 export const SHORT = { legal: "Легализ.", money: "Деньги", work: "Работа", health: "Здоровье", safety: "Безоп.", climate: "Климат", housing: "Жильё", city: "Город", nature: "Природа", people: "Люди", links: "Связь" };
@@ -28,7 +28,7 @@ export function rankHTML(M, W) {
     const rangeChip = !pale && rr && rr.min !== rr.max ? `№${rr.min}–${rr.max} в зависимости от весов` : "";
     const years = yearsLine(M, row.p.id);
     const share = M.ownShare(row.p.id), note = hiddenNote(M, row.p.id);
-    const why = !pale ? "" : note || (share ? `своих ответов на ★: ${Math.round(share * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length}` : "только мировые данные");
+    const why = !pale ? "" : note || (share || M.ratingsOf(row.p.id).length ? `своих ответов на ★: ${Math.round(share * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length}` : "только мировые данные");
     return `<a class="row${pale ? " pale" : ""}" href="${placeHref(row.p.id)}">
       <span class="pos num">${pale ? "·" : pos}</span>
       <div class="name"><b>${esc(row.p.name)}</b><div class="chips">${row.p.country ? `<span class="chip">${esc(row.p.country)}</span>` : ""}${why ? `<span class="chip">${esc(why)}</span>` : ""}${rangeChip ? `<span class="chip">${rangeChip}</span>` : ""}${row.t.coverage < 0.7 ? `<span class="chip">заполнено ${Math.round(row.t.coverage * 100)}%</span>` : ""}${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">год здесь: ${esc(years)}</span>` : ""}</div></div>
@@ -37,7 +37,7 @@ export function rankHTML(M, W) {
     </a>`;
   };
   own.forEach((row, i) => { html += rowHTML(row, i + 1, false); });
-  if (!own.length) html += `<div class="empty-row">Своих оценок пока нет. Место попадёт сюда, когда отвечено хотя бы на половину главных вопросов ★.</div>`;
+  if (!own.length) html += `<div class="empty-row">${r.rated.concat(r.thin).some(row => M.ratingsOf(row.p.id).length) ? "Пока ни одно место не набрало ответов на половину главных вопросов ★: места с нашими оценками — ниже." : "Своих оценок пока нет."} Место попадёт сюда, когда отвечено хотя бы на половину главных вопросов ★.</div>`;
   r.base.forEach(p => {
     html += `<a class="row" href="${placeHref(p.id)}"><span class="pos num">—</span><div class="name"><b>${esc(p.name)}</b><div class="chips"><span class="chip solid">база</span></div></div><div class="track"><span class="base"></span></div><div class="score num">3.0<small>по определению</small></div></a>`;
   });
@@ -46,7 +46,9 @@ export function rankHTML(M, W) {
     dataOnly.forEach(row => { html += rowHTML(row, 0, true); });
   }
   if (r.thin.length) html += `<div class="empty-row">Мало данных для рейтинга (заполнено меньше ${MIN_COVERAGE * 100}%): ${r.thin.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${Math.round(x.t.coverage * 100)}%`).join(", ")}</div>`;
-  if (r.unrated.length) html += `<div class="empty-row">Ещё без оценок и данных: ${r.unrated.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a>`).join(", ")}</div>`;
+  const waiting = r.unrated.filter(x => hiddenWho(M, x.p.id).length), unrated = r.unrated.filter(x => !waiting.includes(x));
+  if (waiting.length) html += `<div class="empty-row">Ждут вашей оценки: ${waiting.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${esc(hiddenNote(M, x.p.id))}`).join("; ")}</div>`;
+  if (unrated.length) html += `<div class="empty-row">Ещё без оценок и данных: ${unrated.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a>`).join(", ")}</div>`;
   if (r.out.length) html += `<div class="empty-row">Отсев: ${r.out.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${esc(x.why)}`).join("; ")}</div>`;
   return html;
 }
@@ -59,9 +61,8 @@ export function heatHTML(M, W) {
   rows.forEach(({ p }) => {
     html += `<tr><th class="rowh"><a href="${placeHref(p.id)}">${esc(p.name)}</a></th>`;
     M.GROUPS.forEach(g => {
-      const v = M.groupScore(p, g.key, "final");
-      const strong = v != null && Math.abs(v - 3) >= 1.4;
-      html += `<td class="cell${v == null ? " none" : ""}${strong ? " strong" : ""}" style="${heatStyle(v)}" data-tip="${esc(p.name)} · ${esc(g.name)}: ${fmt(v)}">${fmt(v)}</td>`;
+      const v = M.groupScore(p, g.key, "final"), bg = v == null ? null : heatHex(v);
+      html += `<td class="cell${v == null ? " none" : ""}" style="${bg ? `background:${bg};color:${inkOn(bg)}` : ""}" data-tip="${esc(p.name)} · ${esc(g.name)}: ${fmt(v)}">${fmt(v)}</td>`;
     });
     html += "</tr>";
   });
@@ -189,11 +190,12 @@ export function placeScore(M, p, W) {
 }
 
 export function placesListHTML(M, W, filter, connected = true) {
-  const q = (filter || "").trim().toLowerCase();
+  const norm = s => String(s || "").toLowerCase().replace(/ё/g, "е");
+  const q = norm(filter).trim();
   const order = { "финалист": 0, "кандидат": 1, "база": 2, "отсев": 3 };
-  const list = M.places.filter(p => !q || p.name.toLowerCase().includes(q) || String(p.country || "").toLowerCase().includes(q));
+  const list = M.places.filter(p => !q || norm(p.name).includes(q) || norm(p.country).includes(q));
   list.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.name.localeCompare(b.name, "ru"));
-  if (!list.length) return `<p class="pad small muted">${q ? `Ничего не нашлось. Новое место добавляется через <a href="#/map">поиск на карте</a>.` : connected ? "Мест пока нет. Добавьте первое через поиск на карте." : `Места появятся после подключения данных: вставьте ключ в <a href="#/settings">настройках</a>.`}</p>`;
+  if (!list.length) return `<p class="pad small muted">${q ? `Ничего не нашлось. Новое место добавляется через <a href="#/map">поиск на карте</a>.` : typeof connected === "string" ? esc(connected) : connected ? "Мест пока нет. Добавьте первое через поиск на карте." : `Места появятся после подключения данных: вставьте ключ в <a href="#/settings">настройках</a>.`}</p>`;
   return list.map(p => {
     const t = placeScore(M, p, W);
     const n = M.ratingsOf(p.id).length;

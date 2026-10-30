@@ -5,7 +5,7 @@ import { GitHubStore } from "./store.js";
 import { MapView } from "./map.js";
 import { search, reverse } from "./geo.js";
 import { Similar, kgName } from "./similar.js";
-import { $, esc, local, toast, scoreColor, scoreHex, pal, refreshPalette, uid } from "./util.js";
+import { $, esc, local, toast, scoreHex, inkOn, pal, refreshPalette, uid } from "./util.js";
 import { World, CITY_INDICATORS, MONTHS, fmtValue, toScore, CIVIDIS, haversine } from "./world.js";
 import { rankHTML, heatHTML, flagsHTML, radarSVG, tripsHTML, subtableHTML, placesListHTML, placeHref, placeScore, yearsLine, hasResidents, hiddenNote, hiddenWho, SHORT } from "./views.js";
 
@@ -29,6 +29,11 @@ const state = {
   lastSaved: "",
   flashTrip: null,
   prevPending: 0,
+  simCandidate: null,
+  introShown: false,
+  fitSimilar: false,
+  pendingEdit: null,
+  histId: null,
 };
 
 const canWrite = () => state.data.hasToken;
@@ -90,19 +95,21 @@ const W = () => normalize(state.schema.groups, state.weights);
 function renderSync() {
   const d = state.data;
   const dot = $("syncDot"), t = $("syncText");
-  dot.className = "dot" + (d.status === "live" ? " live" : d.status === "sync" || d.status === "pending" ? " sync" : d.status === "error" || d.status === "auth" ? " err" : "");
+  const lost = d.status === "live" ? d.lost.length : 0;
+  dot.className = "dot" + (d.status === "error" || d.status === "auth" || lost ? " err" : d.status === "live" ? " live" : d.status === "sync" || d.status === "pending" ? " sync" : "");
   const n = d.pending.length;
   const map = {
     notoken: "Не подключено",
     idle: "…",
     sync: "Обновляю…",
-    live: state.lastSaved ? "Сохранено · " + state.lastSaved : "Подключено",
+    live: lost ? "Не отправлено: " + lost : state.lastSaved ? "Сохранено · " + state.lastSaved : "Подключено",
     pending: `В очереди: ${n}`,
-    offline: n ? `Офлайн · в очереди: ${n}` : "Офлайн · показан кэш",
+    offline: n ? `Офлайн · в очереди: ${n}` : d.loadedAt ? "Офлайн · показан кэш" : "Офлайн · данных ещё нет",
     auth: "Ключ не подходит",
     error: "Ошибка связи",
   };
   t.textContent = map[d.status] || d.status;
+  $("syncAction").textContent = d.status === "notoken" ? "Подключить данные:" : lost && state.route.name === "map" ? "Показать неотправленное:" : "Обновить данные:";
   $("syncBtn").title = d.status === "notoken" ? "Подключить данные" : d.error || "Обновить данные";
 }
 
@@ -110,14 +117,23 @@ function renderSync() {
 function parseRoute() {
   const h = location.hash.replace(/^#\/?/, "");
   const [name, ...rest] = h.split("/");
-  return { name: name || "map", arg: rest.map(decodeURIComponent).join("/") };
+  const dec = x => { try { return decodeURIComponent(x); } catch (e) { return x; } };
+  return { name: name || "map", arg: rest.map(dec).join("/") };
 }
 
 function go(hash) { if (location.hash !== hash) location.hash = hash; else route(); }
 
 const VIEWS = { map: "v-map", rank: "v-rank", places: "v-places", place: "v-place", rate: "v-rate", settings: "v-settings" };
 
-function route() {
+const scrolls = {};
+let histSeq = 0;
+const TITLES = { rank: "Рейтинг", places: "Места", rate: "Оценить", settings: "Настройки" };
+
+function route(top) {
+  if (state.histId) scrolls[state.histId] = scrollY;
+  const known = !!(history.state && history.state.wtl);
+  if (!known) history.replaceState({ wtl: Date.now().toString(36) + "-" + histSeq++ }, "");
+  state.histId = history.state.wtl;
   state.route = parseRoute();
   state.dirty = false;
   if (!VIEWS[state.route.name]) { history.replaceState(null, "", "#/map"); state.route = { name: "map", arg: "" }; }
@@ -130,13 +146,15 @@ function route() {
     const on = a.dataset.nav === r || (r === "place" && a.dataset.nav === "places");
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  if (id !== "v-map") window.scrollTo(0, 0);
   render();
+  if (id !== "v-map") window.scrollTo(0, known && top !== true ? scrolls[state.histId] || 0 : 0);
 }
 
 function render() {
   renderSync();
   const r = state.route.name;
+  const p = r === "place" && state.M.PLACE[state.route.arg];
+  document.title = p ? p.name + " — Где жить" : TITLES[r] ? TITLES[r] + " — Где жить" : "Где жить";
   if (r === "map") { renderMap(); refreshSheet(); }
   else if (r === "rank") renderRank();
   else if (r === "places") renderPlaces();
@@ -149,7 +167,7 @@ function render() {
 function bannerHTML() {
   const d = state.data;
   if (!d.hasToken) return `<div class="banner"><b>Данные не подключены.</b> Карта и мировые показатели работают, а чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</div>`;
-  if (d.status === "auth") return `<div class="banner err"><b>Ключ доступа не подходит.</b> ${esc(d.error)}. Проверьте его в <a href="#/settings">настройках</a>.</div>`;
+  if (d.status === "auth") return `<div class="banner err"><b>Ключ доступа не подходит.</b> ${d.error && !/не подходит/.test(d.error) ? esc(d.error) + ". " : ""}Проверьте его в <a href="#/settings">настройках</a>.</div>`;
   if (d.error && d.status !== "live") return `<div class="banner err">${esc(d.error)}</div>`;
   if (d.error) return `<div class="banner">${esc(d.error)}</div>`;
   const lost = d.lost;
@@ -183,7 +201,8 @@ function renderRank() {
   const saved = state.data.view().weights;
   const own = M.PEOPLE.filter(w => saved[w] && Object.keys(saved[w]).length);
   const names = ["Поровну"].concat(own, own.length === M.PEOPLE.length ? ["Оба"] : [], ["Своё"]);
-  if (!names.includes(state.preset)) { state.preset = "Поровну"; state.weights = Object.assign({}, M.presets["Поровну"]); }
+  const cur = names.includes(state.preset) ? state.preset : "Поровну";
+  if (cur !== state.preset) state.weights = Object.assign({}, M.presets["Поровну"]);
   const norm = W(), sh = shares(norm);
   const trips = tripCount();
   const who = me();
@@ -194,11 +213,11 @@ function renderRank() {
     </header>
     ${bannerHTML()}
     <section class="block">
-      <div class="sec-head"><h2>Места</h2><div class="seg" role="group" aria-label="Чьи веса" id="presets">${names.map(n => `<button type="button" aria-pressed="${n === state.preset}" data-p="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
+      <div class="sec-head"><h2>Места</h2><div class="seg" role="group" aria-label="Чьи веса" id="presets">${names.map(n => `<button type="button" aria-pressed="${n === cur}" data-p="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
       <p class="small muted">3 — как в СПб, правее — лучше. Точки: <i class="sw m"></i> ${esc(M.PEOPLE[0])}, <i class="sw v"></i> ${esc(M.PEOPLE[1])}. Кнопки выше — чьи веса групп учитывать.</p>
       <div class="panel">
         <details class="weights" id="wdetails"${local.get("wopen", false) ? " open" : ""}>
-          <summary id="wsum">Веса групп: «${esc(state.preset)}»${!own.length ? " · своих весов ещё никто не сохранил" : ""}</summary>
+          <summary id="wsum">Веса групп: «${esc(cur)}»${!own.length ? " · своих весов ещё никто не сохранил" : ""}</summary>
           <p class="small muted">Раздайте 100 очков между группами: чем важнее для вас разница между местами в группе, тем больше очков. Двигаете одну — остальные подстраиваются, сумма остаётся 100.</p>
           <div class="wgrid" id="wgrid">${M.GROUPS.map(g => `<label class="wrow" for="w-${g.key}"><span>${esc(g.name)}</span><span class="num muted">${sh[g.key]}</span><input type="range" id="w-${g.key}" data-g="${g.key}" min="0" max="100" step="1" value="${sh[g.key]}"></label>`).join("")}</div>
           ${canWrite() ? (who ? `<div class="wsave"><button type="button" class="btn ghost small" id="wsaveBtn">Сохранить как мои веса (${esc(who)})</button></div>` : `<p class="small muted">Чтобы сохранить веса как свои, выберите в <a href="#/settings">настройках</a>, кто вы.</p>`) : ""}
@@ -209,7 +228,7 @@ function renderRank() {
     </section>
     <section class="block">
       <div class="sec-head"><h2>Места × группы</h2><div class="scale-key"><span>хуже СПб</span><i style="background: var(--neg)"></i><i style="background: color-mix(in oklab, var(--neg) 45%, var(--mid))"></i><i style="background: var(--mid)"></i><i style="background: color-mix(in oklab, var(--pos) 45%, var(--mid))"></i><i style="background: var(--pos)"></i><span>лучше</span></div></div>
-      <div class="panel scroll"><table class="heat">${heatHTML(M, norm)}</table></div>
+      <div class="panel scroll">${M.places.length ? `<table class="heat" id="heat">${heatHTML(M, norm)}</table>` : `<p class="pad small muted">Сравнивать пока нечего: добавьте место через поиск на <a href="#/map">карте</a>.</p>`}</div>
     </section>
     <section class="block">
       ${(() => { const f = flagsHTML(M); return `<div class="sec-head"><h2>Флаги</h2><span class="small muted">${f.count ? f.count : ""}</span></div><div class="panel"><div class="flags">${f.html}</div></div>`; })()}
@@ -221,7 +240,7 @@ function renderRank() {
     state.preset = b.dataset.p;
     state.weights = Object.assign({}, b.dataset.p === "Своё" ? local.get("customWeights", null) || W() : state.M.presets[state.preset]);
     local.set("preset", state.preset); local.set("weights", state.weights);
-    renderRank();
+    rerender(renderRank);
   });
   $("wgrid").addEventListener("input", e => {
     const inp = e.target.closest("input[data-g]");
@@ -235,6 +254,7 @@ function renderRank() {
     local.set("preset", "Своё"); local.set("weights", next); local.set("customWeights", next);
     const n = W(), sh2 = shares(n);
     $("rank").innerHTML = rankHTML(state.M, n);
+    if ($("heat")) $("heat").innerHTML = heatHTML(state.M, n);
     $("wgrid").querySelectorAll(".wrow").forEach((row, i) => {
       const g = state.M.GROUPS[i].key;
       row.querySelector(".num").textContent = sh2[g];
@@ -272,8 +292,15 @@ function renderPlaces() {
   el.innerHTML = `<header class="stack" style="gap:8px"><h1>Места</h1><p class="small muted">Где были и куда смотрим. Новое место — через поиск на <a href="#/map">карте</a>.</p></header>
     ${bannerHTML()}
     <input type="search" id="placeFilter" placeholder="Фильтр по названию или стране" value="${esc(state.placeFilter)}" aria-label="Фильтр мест">
-    <div class="panel plist" id="plist">${placesListHTML(state.M, W(), state.placeFilter, state.data.hasToken)}</div>`;
-  $("placeFilter").addEventListener("input", e => { state.placeFilter = e.target.value; $("plist").innerHTML = placesListHTML(state.M, W(), state.placeFilter, state.data.hasToken); });
+    <div class="panel plist" id="plist">${placesListHTML(state.M, W(), state.placeFilter, emptyNote())}</div>`;
+  $("placeFilter").addEventListener("input", e => { state.placeFilter = e.target.value; $("plist").innerHTML = placesListHTML(state.M, W(), state.placeFilter, emptyNote()); });
+}
+
+function emptyNote() {
+  const d = state.data;
+  if (!d.hasToken) return false;
+  if (d.loadedAt) return true;
+  return d.status === "sync" || d.status === "idle" ? "Загружаю данные…" : "Места ещё не загружены: нет связи или ключ не подходит. Появятся, когда данные загрузятся.";
 }
 
 /* ---------- place dossier ---------- */
@@ -293,7 +320,7 @@ function worldRowsHTML(cc, city, first) {
     if (v == null) return;
     rows.push({ ind, v, s: (ind.cats || []).length ? Wd.cityScore(city, ind.key) : null, level: city.synthetic ? "точка" : "город" });
   });
-  const row = r => `<div class="world-row"><span>${esc(r.ind.name)}<small>${esc(r.level)}${r.year ? " · " + r.year : ""}${r.ind.source ? " · " + esc(r.ind.source) : ""}${r.ind.note ? " · " + esc(r.ind.note) : ""}</small></span><span class="v">${esc(fmtValue(r.ind, r.v))}</span><span class="s" style="background:${r.s == null ? "transparent" : scoreColor(r.s)};color:${r.s != null && Math.abs(r.s - 3) >= 1.4 ? "var(--on-strong)" : "var(--ink)"}" title="Шкала 1–5, Россия/СПб = 3">${r.s == null ? "" : fmt(r.s)}</span></div>`;
+  const row = r => `<div class="world-row"><span>${esc(r.ind.name)}<small>${esc(r.level)}${r.year ? " · " + r.year : ""}${r.ind.source ? " · " + esc(r.ind.source) : ""}${r.ind.note ? " · " + esc(r.ind.note) : ""}</small></span><span class="v">${esc(fmtValue(r.ind, r.v))}</span><span class="s" style="background:${r.s == null ? "transparent" : scoreHex(r.s)};color:${r.s == null ? "var(--ink)" : inkOn(scoreHex(r.s))}" title="Шкала 1–5, Россия/СПб = 3">${r.s == null ? "" : fmt(r.s)}</span></div>`;
   if (!rows.length) return `<p class="small muted">Мировых данных по этому месту нет.</p>`;
   const top = first && rows.find(r => r.ind.key === first);
   if (top) html += `<div class="small muted wgh">Показатель на карте</div>` + row(top);
@@ -347,9 +374,10 @@ function similarCountriesHTML(list) {
 function externalLinks(p, city) {
   const en = (city && city.en) || p.name;
   const ascii = en.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
-  const country = p.cc ? state.world.enNameOf(p.cc) : "";
+  const country = state.world.enNameOf(p.cc || (city && city.cc));
   const link = (href, label) => `<a class="btn ghost small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-  return `<div class="btns">${link(`https://www.numbeo.com/cost-of-living/city_result.jsp?country=${encodeURIComponent(country)}&city=${encodeURIComponent(ascii)}`, "Numbeo: цены")}${link(`https://weatherspark.com/search?q=${encodeURIComponent(en)}`, "Weather Spark: погода")}${link(`https://ru.wikipedia.org/w/index.php?search=${encodeURIComponent(p.name + " " + state.world.nameOf(p.cc))}&fulltext=1`, "Википедия")}</div><p class="small muted">Numbeo — цены от посетителей, у маленьких городов данных мало или нет.</p>`;
+  const numbeo = city && !city.synthetic && city.en && country ? link(`https://www.numbeo.com/cost-of-living/city_result.jsp?country=${encodeURIComponent(country)}&city=${encodeURIComponent(ascii)}`, "Numbeo: цены") : "";
+  return `<div class="btns">${numbeo}${link(`https://weatherspark.com/search?q=${encodeURIComponent(en)}`, "Weather Spark: погода")}${link(`https://ru.wikipedia.org/w/index.php?search=${encodeURIComponent(p.name + " " + state.world.nameOf(p.cc))}&fulltext=1`, "Википедия")}</div>${numbeo ? `<p class="small muted">Numbeo — цены от посетителей, у маленьких городов данных мало или нет.</p>` : ""}`;
 }
 
 function renderPlace(id) {
@@ -357,7 +385,9 @@ function renderPlace(id) {
   const p = M.PLACE[id];
   const el = $("v-place");
   if (!p) {
-    el.innerHTML = `${bannerHTML()}<div class="banner">Место не найдено. <a href="#/places">Все места</a></div>`;
+    const d = state.data;
+    const why = !d.hasToken ? "Место откроется после подключения данных." : d.loadedAt ? `Место не найдено. <a href="#/places">Все места</a>` : d.status === "sync" || d.status === "idle" ? "Загружаю данные…" : "Место откроется, когда загрузятся данные: сейчас нет связи или ключ не подходит.";
+    el.innerHTML = `${bannerHTML()}<div class="banner">${why}</div>`;
     return;
   }
   const norm = W();
@@ -382,7 +412,7 @@ function renderPlace(id) {
       </div>
     </header>
     <div class="panel pad stack" style="gap:8px">
-      <div class="bigscore"><b>${M.isBase(p) ? "3.0" : fmt(t.score)}</b><span class="muted">${M.isBase(p) ? "база по определению" : `из 5, где 3 — как в СПб · заполнено ${Math.round(t.coverage * 100)}%${ranks[p.id] ? ` · №${ranks[p.id]} в рейтинге` : t.score != null && t.coverage < MIN_COVERAGE ? " · мало оценок для рейтинга" : ""}`}</span></div>
+      <div class="bigscore"><b>${M.isBase(p) ? "3.0" : fmt(t.score)}</b><span class="muted">${M.isBase(p) ? "база по определению" : `из 5, где 3 — как в СПб · заполнено ${Math.round(t.coverage * 100)}%${ranks[p.id] ? ` · №${ranks[p.id]} в рейтинге` : t.score != null && t.coverage < MIN_COVERAGE ? " · мало оценок для рейтинга" : t.score != null && !M.ownEnough(p.id) && !onlyData ? ` · своих ответов на ★: ${Math.round(M.ownShare(p.id) * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length}, пока не в рейтинге` : ""}`}</span></div>
       ${onlyData ? `<p class="small muted">${hiddenNote(M, p.id) ? "Ваших оценок нет, " + esc(hiddenNote(M, p.id)) + ": итог пока по мировым данным." : "Мы здесь ещё не были: итог посчитан только по мировым данным."}</p>` : parts.length > 1 ? `<p class="small muted">Из чего итог: ${parts.map(([w, v]) => `${esc(w)} ${fmt(v)}`).join(" · ")}</p>` : ""}
       ${p.questions ? `<div class="small"><b>Вопросы к следующей поездке:</b> ${esc(p.questions)}</div>` : ""}
       ${p.status === "отсев" && p.reason ? `<div class="small"><b>Причина отсева:</b> ${esc(p.reason)}</div>` : ""}
@@ -408,7 +438,7 @@ function renderPlace(id) {
     <section class="block">
       <div class="sec-head"><h2>${M.isBase(p) ? "Цифры СПб — ориентиры для сравнения" : "Цифры места"}</h2></div>
       <form class="panel pad stack" id="factsForm">${factsHTML(p)}
-        ${canWrite() ? `<div class="btns"><button type="submit" class="btn">Сохранить цифры</button><span class="msg" id="factsMsg"></span></div>` : ""}
+        ${canWrite() ? `<div class="btns"><button type="submit" class="btn">Сохранить цифры</button><span class="msg" id="factsMsg" role="status"></span></div>` : ""}
       </form>
     </section>
     <section class="block">
@@ -421,7 +451,7 @@ function renderPlace(id) {
         </div>
         <label class="field" id="reasonBox"${p.status === "отсев" ? "" : " hidden"}><span class="lbl">Причина отсева</span><input type="text" name="reason" value="${esc(p.reason || "")}" ${canWrite() ? "" : "disabled"}></label>
         <label class="field"><span class="lbl">Вопросы к следующей поездке</span><textarea name="questions" rows="3" ${canWrite() ? "" : "disabled"}>${esc(p.questions || "")}</textarea></label>
-        ${canWrite() ? `<div class="btns"><button type="submit" class="btn">Сохранить карточку</button><span class="msg" id="placeMsg"></span></div>` : ""}
+        ${canWrite() ? `<div class="btns"><button type="submit" class="btn">Сохранить карточку</button><span class="msg" id="placeMsg" role="status"></span></div>` : ""}
       </form>
     </section>`;
   const dirtyForms = new Set();
@@ -442,16 +472,20 @@ function renderPlace(id) {
   const factsOrig = Object.fromEntries((state.schema.facts || []).map(F => [F.key, factIn(F)]));
   $("factsForm").addEventListener("submit", e => {
     e.preventDefault();
-    const edits = {}, bad = [];
+    const edits = {}, bad = [], need = [], typo = [];
     (state.schema.facts || []).forEach(F => {
       const cur = factIn(F), was = factsOrig[F.key];
       if (cur.raw === was.raw && cur.src === was.src) return;
-      if (!cur.raw) { edits[F.key] = null; return; }
-      const v = Number(cur.raw.replace(/[\s\u00a0€$₽]/g, "").replace(",", "."));
+      if (!cur.raw) { if (was.raw) edits[F.key] = null; else if (cur.src) need.push(F.name); return; }
+      const v = parseAmount(cur.raw);
       if (!(v > 0)) { bad.push(F.name); return; }
+      if (F.rule === "money" && v < 5) { typo.push(`${F.name}: ${cur.raw}`); return; }
       edits[F.key] = { v, src: cur.src, at: new Date().toISOString().slice(0, 10) };
     });
-    if (bad.length) { $("factsMsg").textContent = "Не число: " + bad.join(", ") + ". Впишите только цифры, например 640."; $("factsMsg").className = "msg err"; return; }
+    const fail = text => { $("factsMsg").textContent = text; $("factsMsg").className = "msg err"; };
+    if (need.length) return fail("Впишите число: " + need.join(", ") + ". Источник без числа не сохраняется.");
+    if (bad.length) return fail("Не число: " + bad.join(", ") + ". Впишите только цифры, например 640.");
+    if (typo.length) return fail("Похоже на опечатку: " + typo.join(", ") + ". Впишите сумму целиком, например 1050.");
     if (!Object.keys(edits).length) { $("factsMsg").textContent = "Ничего не изменилось."; $("factsMsg").className = "msg"; return; }
     savePlaceDoc("factsForm", cur => {
       const facts = Object.assign({}, cur.facts);
@@ -467,7 +501,7 @@ function renderPlace(id) {
     e.preventDefault();
     const now = cardIn(), edits = {};
     Object.keys(now).forEach(k => { if (now[k] !== cardOrig[k]) edits[k] = now[k]; });
-    if (!edits.name && "name" in edits) delete edits.name;
+    if ("name" in edits && !edits.name) { $("placeMsg").textContent = "Название не может быть пустым."; $("placeMsg").className = "msg err"; return; }
     if (!Object.keys(edits).length) { $("placeMsg").textContent = "Ничего не изменилось."; $("placeMsg").className = "msg"; return; }
     savePlaceDoc("placeForm", cur => Object.assign({}, cur, edits), "placeMsg", "Карточка сохранена");
   });
@@ -480,21 +514,30 @@ function renderPlace(id) {
   fillSimilar(p);
 }
 
+function parseAmount(raw) {
+  let s = String(raw).replace(/[\s\u00a0€$₽]/g, "");
+  if (/^[1-9]\d{0,2}([.,]\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
+  else if (s.includes(".") && s.includes(",")) { const i = Math.max(s.lastIndexOf("."), s.lastIndexOf(",")); s = s.slice(0, i).replace(/[.,]/g, "") + "." + s.slice(i + 1); }
+  else s = s.replace(",", ".");
+  return Number(s);
+}
+
 const ARCHETYPES = ["курорт", "малый курорт", "город у моря", "мегаполис", "столица", "горы"];
 
 function factsHTML(p) {
   const base = state.M.isBase(p);
   const F = state.schema.facts || [];
   const dis = canWrite() ? "" : " disabled";
-  return `<p class="small muted">${base ? "С этими цифрами сравниваются цифры других мест: в полтора раза дороже СПб — минус балл. Пустое поле — берётся ориентир по умолчанию." : "Цифры вносятся один раз на место, вместо оценки 1–5: приложение само сравнит их с СПб. Можно попросить Claude найти их по объявлениям."}</p>` + F.map(f => {
+  const spb = state.M.places.find(state.M.isBase);
+  return `<p class="small muted">${base ? `С этими цифрами сравниваются цифры других мест: в полтора раза дороже СПб — минус балл. Пустое поле — берётся ориентир по умолчанию; где его нет (${F.filter(f => f.rule === "money" && !f.ref).map(f => esc(f.name.toLowerCase())).join(", ")}), без цифры СПб сравнить не с чем.` : "Цифры вносятся один раз на место, вместо оценки 1–5: приложение само сравнит их с СПб. Можно попросить Claude найти их по объявлениям."}</p>` + F.map(f => {
     const cur = p.facts && p.facts[f.key];
     const ref = factRef(f, state.M.places);
     const sc = base ? null : factScore(f, cur ? Number(cur.v) : null, ref);
     return `<div class="fact">
-      <label class="field"><span class="lbl">${esc(f.name)}, ${esc(f.unit)}${sc != null ? ` <span class="badge" style="background:${scoreColor(sc)}">${fmt(sc)}</span>` : ""}</span>
+      <label class="field"><span class="lbl">${esc(f.name)}, ${esc(f.unit)}${sc != null ? ` <span class="badge" style="background:${scoreHex(sc)};color:${inkOn(scoreHex(sc))}">${fmt(sc)}</span>` : ""}</span>
         <input type="text" inputmode="decimal" name="fact_${f.key}" value="${cur ? esc(String(cur.v)) : ""}" placeholder="${base && f.ref ? "по умолчанию " + f.ref : ""}"${dis}></label>
       <label class="field src"><span class="lbl">Откуда</span><input type="text" name="src_${f.key}" value="${cur ? esc(cur.src || "") : ""}" placeholder="сайт, число объявлений"${dis}></label>
-      <span class="small muted">${esc(f.hint)}${!base && f.rule === "money" && ref ? ` СПб: €${ref}.` : ""}${cur && cur.at ? ` Вписано ${esc(cur.at)}.` : ""}</span>
+      <span class="small muted">${esc(f.hint)}${!base && f.rule === "money" ? ref ? ` СПб: €${ref}.` : ` Балла нет, пока не вписан чек СПб: ${spb ? `<a href="${placeHref(spb.id)}">досье СПб</a>` : "досье СПб"}, «Цифры».` : ""}${cur && cur.at ? ` Вписано ${esc(cur.at)}.` : ""}</span>
     </div>`;
   }).join("");
 }
@@ -512,12 +555,12 @@ async function fillSimilar(p) {
   if (!p.cc && !city) { box.innerHTML = `<p class="small muted">У места нет координат и страны — сравнивать не с чем.</p>`; return; }
   const sp = state.sim.similarSplit({ cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }, W());
   if ($("simBox") !== box) return;
-  box.innerHTML = similarSplitHTML(sp, p.cc) + `<div class="btns" style="margin-top:10px"><button type="button" class="btn ghost small" id="simMap">Показать на карте</button></div>`;
+  box.innerHTML = similarSplitHTML(sp, p.cc) + (sp.home.length || sp.abroad.length ? `<div class="btns" style="margin-top:10px"><button type="button" class="btn ghost small" id="simMap">Показать на карте</button></div>` : "");
   box.addEventListener("click", e => {
     const b = e.target.closest("[data-city]");
     if (b) { const c = state.world.cities.find(x => String(x.id) === b.dataset.city); if (c) { go("#/map"); setTimeout(() => openCity(c, true), 50); } }
   });
-  $("simMap").addEventListener("click", () => { state.layers.city = "similar"; state.layers.simTo = { type: "place", id: p.id }; saveLayers(); go("#/map"); });
+  $("simMap")?.addEventListener("click", () => { state.layers.city = "similar"; state.layers.simTo = { type: "place", id: p.id }; state.fitSimilar = true; saveLayers(); go("#/map"); });
 }
 
 /* ---------- rate ---------- */
@@ -526,9 +569,12 @@ function renderRate(arg) {
     state.form = new RateForm($("rateForm"), state.schema, {
       canWrite,
       save: (body, { isNew, baseOid, questions } = {}) => {
-        const p = state.M.PLACE[body.place];
-        const extra = questions && p ? [state.data.placeChange(Object.assign({}, p, { questions: p.questions ? p.questions.trim() + "\n" + questions : questions }))] : [];
-        return state.data.saveRating(body, { isNew, baseOid, extra });
+        const extra = () => { const p = state.M.PLACE[body.place]; return questions && p ? [state.data.placeChange(Object.assign({}, p, { questions: p.questions ? p.questions.trim() + "\n" + questions : questions }))] : []; };
+        return state.data.saveRating(body, { isNew, baseOid, extra: extra() }).catch(err => {
+          if (err.code !== "clash" || !(err.paths || []).every(x => x.startsWith("places/"))) throw err;
+          rebuild();
+          return state.data.saveRating(body, { isNew, baseOid, extra: extra() });
+        });
       },
       saved: (res, placeId) => {
         savedNow(res.r);
@@ -548,19 +594,51 @@ function renderRate(arg) {
     });
   }
   state.form.setPlaces(state.M.places);
+  state.pendingEdit = null;
+  state.route.arg = "";
   if (arg && arg.startsWith("new/")) {
     state.form.startFor(arg.slice(4));
-    history.replaceState(null, "", "#/rate");
+    history.replaceState(history.state, "", "#/rate");
   } else if (arg) {
     const r = state.data.view().ratings.find(x => x.id === arg && !x.deleted);
-    if (r) state.form.load(r, state.data.oidOf("ratings", r.id)); else toast("Оценка не найдена");
-    history.replaceState(null, "", "#/rate");
+    if (r) state.form.load(r, state.data.oidOf("ratings", r.id));
+    else if (state.data.hasToken && !state.data.loadedAt && ["idle", "sync"].includes(state.data.status)) state.pendingEdit = arg;
+    else toast("Оценка не найдена");
+    history.replaceState(history.state, "", "#/rate");
   } else state.form.startNew();
-  if (!$("rateBanner")) $("rateForm").insertAdjacentHTML("afterbegin", `<div id="rateBanner"></div>`);
+  if (!$("rateBanner")) $("fTop").insertAdjacentHTML("beforebegin", `<div id="rateBanner"></div>`);
   $("rateBanner").innerHTML = bannerHTML();
 }
 
 /* ---------- settings ---------- */
+function openPendingEdit() {
+  const id = state.pendingEdit, d = state.data;
+  if (!id || state.route.name !== "rate" || ["idle", "sync"].includes(d.status)) return;
+  state.pendingEdit = null;
+  const r = d.view().ratings.find(x => x.id === id && !x.deleted);
+  if (r) state.form.load(r, d.oidOf("ratings", r.id)); else toast("Оценка не найдена");
+}
+
+function setMe(who) {
+  local.set("me", who);
+  if (state.form && !state.form.form.id) { state.form.form.who = who; state.form.persist(); state.form.sync(); }
+  rebuild();
+}
+
+function rerender(fn) {
+  const view = $(VIEWS[state.route.name]);
+  const typed = [...view.querySelectorAll("form[id]")].flatMap(f => [...f.elements].filter(e => e.name && !/^(checkbox|radio|submit|button|hidden)$/.test(e.type) && (e.tagName === "SELECT" ? !(e.selectedOptions[0] || {}).defaultSelected : e.value !== e.defaultValue)).map(e => [f.id, e.name, e.value]));
+  const FOC = "button, a[href], input, select, textarea, summary";
+  const a = document.activeElement, g = a && a !== document.body && a.parentElement && a.parentElement.closest("[id]");
+  const sel = g && [...a.attributes].filter(x => x.name.startsWith("data-")).map(x => `[${x.name}="${CSS.escape(x.value)}"]`).join("");
+  const at = g ? [...g.querySelectorAll(FOC)].indexOf(a) : -1, gid = g && g.id, aid = a && a.id;
+  fn();
+  typed.forEach(([fid, n, v]) => { const e = $(fid) && $(fid).elements[n]; if (e && e.value !== v) { e.value = v; e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); } });
+  if (!g || a.isConnected) return;
+  const box = $(gid), b = aid ? $(aid) : box && (sel ? box.querySelector(sel) : at >= 0 ? box.querySelectorAll(FOC)[at] : null);
+  if (b) b.focus({ preventScroll: true });
+}
+
 function renderSettings() {
   const d = state.data;
   const who = me();
@@ -571,13 +649,14 @@ function renderSettings() {
   const ind = state.world.indicators;
   const installFirst = isPhone() && !isStandalone();
   const install = `<section class="block"><h2>${installFirst ? "Сначала: установите на экран «Домой»" : "На экран «Домой»"}</h2>
-      <div class="panel pad help"><span>iPhone: Safari → Поделиться → «На экран „Домой“». Дальше открывайте с иконки: так данные не стираются через неделю, как во вкладке Safari.</span><span>У приложения с экрана «Домой» своё хранилище, поэтому ключ доступа вставляется уже в нём.</span></div>
+      <div class="panel pad help">${/Android/i.test(navigator.userAgent) ? `<span>Android: Chrome → ⋮ → «Добавить на главный экран». Дальше открывайте с иконки, как обычное приложение.</span>` : `<span>iPhone: Safari → Поделиться → «На экран „Домой“». Дальше открывайте с иконки: так данные не стираются через неделю, как во вкладке Safari.</span>`}<span>У приложения с экрана «Домой» своё хранилище, поэтому ключ доступа вставляется уже в нём.</span></div>
     </section>`;
   $("v-settings").innerHTML = `
     <header><h1>Настройки</h1></header>
+    ${d.lost.length ? bannerHTML() : ""}
     ${installFirst ? install : ""}
     <section class="block"><h2>Кто я на этом устройстве</h2>
-      <div class="panel pad stack"><div class="seg" role="group" id="meSeg">${state.schema.people.map(w => `<button type="button" data-me="${esc(w)}" aria-pressed="${w === who}">${esc(w)}</button>`).join("")}</div><p class="small muted">Подставляется в форму оценки. Оценки другого скрыты, пока вы не оцените место сами, чтобы не подглядывать.</p></div>
+      <div class="panel pad stack"><div class="seg" role="group" aria-label="Кто я на этом устройстве" id="meSeg">${state.schema.people.map(w => `<button type="button" data-me="${esc(w)}" aria-pressed="${w === who}">${esc(w)}</button>`).join("")}</div><p class="small muted">Подставляется в форму оценки. Оценки другого скрыты, пока вы не оцените место сами, чтобы не подглядывать.</p></div>
     </section>
     <section class="block"><h2>Подключение к данным</h2>
       <form class="panel pad stack" id="tokenForm">
@@ -585,7 +664,7 @@ function renderSettings() {
         <input type="text" name="username" value="where-to-live-${esc(slugMe())}" autocomplete="username" hidden>
         <label class="field"><span class="lbl">Ключ доступа ${d.hasToken ? "(уже сохранён; вставьте новый, чтобы заменить)" : ""}</span><input type="password" name="token" placeholder="github_pat_…" spellcheck="false" autocapitalize="off" autocomplete="current-password"></label>
         <div class="btns"><button type="submit" class="btn">Сохранить и проверить</button>${d.hasToken ? `<button type="button" class="btn danger" id="forget">Забыть ключ на этом устройстве</button>` : ""}</div>
-        <p class="msg" id="tokenMsg" role="status">${d.hasToken ? esc(statusLine()) : ""}</p>
+        <p class="msg${d.status === "auth" || d.status === "error" ? " err" : ""}" id="tokenMsg" role="status">${d.hasToken ? esc(statusLine()) : ""}</p>
         <details><summary class="small">Как получить ключ</summary><ol class="small help" style="padding-left:18px">
           <li>Откройте <a href="${esc(tokenUrl)}" target="_blank" rel="noopener noreferrer">создание ключа на GitHub</a> (войти под аккаунтом Михаила). Имя, срок «без срока» и право Contents: Read and write уже подставлены.</li>
           <li>Repository access → Only select repositories → <b>${esc(d.repo.split("/")[1] || "where-to-live-data")}</b>.</li>
@@ -599,7 +678,7 @@ function renderSettings() {
     </section>
     <section class="block"><h2>Вид</h2>
       <div class="panel pad stack">
-        <div class="seg" role="group" id="themeSeg">${[["auto", "Как в системе"], ["light", "Светлая"], ["dark", "Тёмная"]].map(([k, n]) => `<button type="button" data-theme="${k}" aria-pressed="${k === theme}">${n}</button>`).join("")}</div>
+        <div class="seg" role="group" aria-label="Тема" id="themeSeg">${[["auto", "Как в системе"], ["light", "Светлая"], ["dark", "Тёмная"]].map(([k, n]) => `<button type="button" data-theme="${k}" aria-pressed="${k === theme}">${n}</button>`).join("")}</div>
         <label class="toggle"><input type="checkbox" id="useData"${useData() ? " checked" : ""}> Учитывать мировые показатели в итоге (колонка «Данные»)</label>
         <p class="small muted">Показатели страны и климат города переводятся в шкалу 1–5, где Россия/СПб = 3, и входят в итог подкатегории по правилам методики: где туристу видно мало, у данных больше веса.</p>
       </div>
@@ -616,8 +695,8 @@ function renderSettings() {
         <span>Код: <a href="https://github.com/Mihinator3000/where-to-live" target="_blank" rel="noopener noreferrer">github.com/Mihinator3000/where-to-live</a>.</span>
       </div>
     </section>`;
-  $("meSeg").addEventListener("click", e => { const b = e.target.closest("[data-me]"); if (!b) return; local.set("me", b.dataset.me); rebuild(); renderSettings(); });
-  $("themeSeg").addEventListener("click", e => { const b = e.target.closest("[data-theme]"); if (!b) return; setTheme(b.dataset.theme); renderSettings(); });
+  $("meSeg").addEventListener("click", e => { const b = e.target.closest("[data-me]"); if (!b) return; setMe(b.dataset.me); rerender(renderSettings); });
+  $("themeSeg").addEventListener("click", e => { const b = e.target.closest("[data-theme]"); if (!b) return; setTheme(b.dataset.theme); rerender(renderSettings); });
   $("useData").addEventListener("change", e => { local.set("worldData", e.target.checked); rebuild(); });
   $("tokenForm").addEventListener("input", () => { state.dirty = true; });
   $("tokenForm").addEventListener("submit", async e => {
@@ -627,13 +706,16 @@ function renderSettings() {
     const repo = String(f.get("repo") || DEFAULT_REPO).trim() || DEFAULT_REPO;
     const msg = $("tokenMsg");
     msg.className = "msg";
+    const fail = text => { msg.textContent = text; msg.className = "msg err"; };
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("Репозиторий укажите как владелец/имя, например Mihinator3000/where-to-live-data.");
+    if (!token && !d.hasToken) return fail("Вставьте ключ доступа: без него данные не загрузить.");
     if (token) {
       msg.textContent = "Проверяю ключ…";
       const [owner, name] = repo.split("/");
       try {
         await new GitHubStore({ owner, repo: name, token }).load();
       } catch (err) {
-        msg.textContent = (err.code === "offline" ? "Нет связи, ключ не проверен и не сохранён." : "Ключ не подошёл, он не сохранён.") + (d.hasToken ? " Остался прежний ключ." : "") + (err.message && err.code !== "auth" ? " " + err.message : "");
+        msg.textContent = (err.code === "offline" ? "Нет связи, ключ не проверен и не сохранён." : "Ключ не подошёл, он не сохранён.") + (d.hasToken ? " Остался прежний ключ." : "") + (err.message && err.code !== "auth" && err.code !== "offline" ? " " + err.message : "");
         msg.className = "msg err";
         return;
       }
@@ -666,7 +748,7 @@ function renderSettings() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });
-  $("refreshBtn").addEventListener("click", () => d.refresh());
+  $("refreshBtn").addEventListener("click", () => { if (d.hasToken) d.refresh(); else { $("tokenMsg").textContent = "Сначала вставьте ключ доступа выше."; $("tokenMsg").className = "msg err"; } });
 }
 
 function statusLine() {
@@ -687,7 +769,8 @@ function placeMarkers() {
     const t = placeScore(M, p, norm);
     const out = p.status === "отсев" || M.vetoed(p);
     const thin = !M.isBase(p) && !M.ownEnough(p.id);
-    return { id: p.id, name: p.name, lat: p.lat, lon: p.lon, base: M.isBase(p), out, thin, dark: t.score != null && Math.abs(t.score - 3) < 1, color: M.isBase(p) ? "var(--base)" : t.score == null ? "var(--none)" : scoreColor(t.score), text: M.isBase(p) ? "" : t.score == null ? "" : fmt(t.score) };
+    const hex = t.score == null || M.isBase(p) ? null : scoreHex(t.score);
+    return { id: p.id, name: p.name, lat: p.lat, lon: p.lon, base: M.isBase(p), out, thin, ink: hex ? inkOn(hex) : "", color: M.isBase(p) ? "var(--base)" : hex || "var(--none)", text: M.isBase(p) ? "" : t.score == null ? "" : fmt(t.score) };
   });
 }
 
@@ -780,8 +863,9 @@ function predictor() {
   return state.sim.predictor(rated, norm);
 }
 
-function similarTarget() {
-  const t = state.layers.simTo;
+function similarTarget() { return targetOf(state.layers.simTo); }
+
+function targetOf(t) {
   if (!t) return null;
   if (t.type === "place") {
     const p = state.M.PLACE[t.id];
@@ -816,13 +900,14 @@ function layersHTML() {
   const L = state.layers, Wd = state.world, G = state.schema.groups;
   const byGroup = G.map(g => ({ g, list: Wd.indicators.filter(i => i.group === g.key) })).filter(x => x.list.length);
   const ratedCount = state.M.candidates().filter(p => state.M.ratingsOf(p.id).length).length;
+  const simT = targetOf(L.city === "similar" ? L.simTo : state.simCandidate || L.simTo);
   return `
     <div class="field"><label class="lbl" for="lyCountry">Раскраска стран</label>
       <select id="lyCountry"><option value="">Без раскраски</option>${byGroup.map(x => `<optgroup label="${esc(x.g.name)}">${x.list.map(i => `<option value="${i.key}"${i.key === L.country ? " selected" : ""}>${esc(i.name)}</option>`).join("")}</optgroup>`).join("")}</select>
-      <div class="seg" role="group" id="lyMode"><button type="button" data-mode="rel" aria-pressed="${L.mode !== "raw"}">Относительно России</button><button type="button" data-mode="raw" aria-pressed="${L.mode === "raw"}">Сырые значения</button></div>
+      ${L.country ? `<div class="seg" role="group" aria-label="Шкала раскраски" id="lyMode"><button type="button" data-mode="rel" aria-pressed="${L.mode !== "raw"}">Относительно России</button><button type="button" data-mode="raw" aria-pressed="${L.mode === "raw"}">Сырые значения</button></div>` : ""}
     </div>
     <div class="field"><label class="lbl" for="lyCity">Города мира</label>
-      <select id="lyCity"><option value="">Не показывать</option>${CITY_INDICATORS.map(i => `<option value="${i.key}"${i.key === L.city ? " selected" : ""}>${esc(i.name)}</option>`).join("")}<option value="similar"${L.city === "similar" ? " selected" : ""}${L.simTo ? "" : " disabled"}>Похожие на выбранное место${L.simTo ? "" : " (выберите место)"}</option><option value="predict"${L.city === "predict" ? " selected" : ""}${ratedCount >= 3 ? "" : " disabled"}>Прогноз для нас${ratedCount >= 3 ? "" : " (нужно ≥ 3 оценённых места)"}</option></select>
+      <select id="lyCity"><option value="">Не показывать</option>${CITY_INDICATORS.map(i => `<option value="${i.key}"${i.key === L.city ? " selected" : ""}>${esc(i.name)}</option>`).join("")}<option value="similar"${L.city === "similar" ? " selected" : ""}${simT ? "" : " disabled"}>${simT ? `Похожие на «${esc(simT.name)}»` : "Похожие на выбранное место (нажмите место или город на карте)"}</option><option value="predict"${L.city === "predict" ? " selected" : ""}${ratedCount >= 3 ? "" : " disabled"}>Прогноз для нас${ratedCount >= 3 ? "" : " (нужно ≥ 3 оценённых места)"}</option></select>
       <span class="desc">Точки городов от 15 тыс. жителей. Климат — средние 1981–2010 (CHELSA), синее — лучше СПб, красное — хуже. «Похожие» и «Прогноз» строятся по вашим весам.</span>
       ${L.city === "predict" ? predictTopHTML() : ""}
     </div>
@@ -844,9 +929,9 @@ function predictTopHTML() {
 function initMap() {
   if (state.mapView) return;
   state.mapView = new MapView($("map"), {
-    onPlace: id => openPlace(id),
+    onPlace: id => { openPlace(id); const p = state.M.PLACE[id]; if (p) state.mapView.keepVisible(p.lat, p.lon); },
     onCountry: (iso, latlng) => openCountry(iso, latlng),
-    onCity: c => openCity(c),
+    onCity: c => { openCity(c); state.mapView.keepVisible(c.lat, c.lon); },
     onBlank: () => { closeSheet(); closeLayers(); },
     onZoom: () => { if (!state.mapView) return; const z = zoomedIn(); if (z !== state.zoomedIn) { state.zoomedIn = z; state.mapView.restyleCountries(countryStyle()); } },
   });
@@ -858,15 +943,20 @@ function initMap() {
     $("layersBtn").setAttribute("aria-expanded", String(!p.hidden));
     if (!p.hidden) p.innerHTML = layersHTML();
   });
-  document.addEventListener("keydown", e => { if (e.key === "Escape" && state.route.name === "map") { if (!$("layersPanel").hidden) closeLayers(); else if (state.sheet) closeSheet(); } });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || state.route.name !== "map") return;
+    if (!$("searchResults").hidden && document.activeElement && document.activeElement.closest(".search")) { searchSeq++; $("searchResults").hidden = true; quietFocus = true; $("searchInput").focus(); quietFocus = false; }
+    else if (!$("layersPanel").hidden) closeLayers();
+    else if (state.sheet) closeSheet();
+  });
   $("layersPanel").addEventListener("change", e => {
     const L = state.layers;
     if (e.target.id === "lyCountry") L.country = e.target.value;
-    if (e.target.id === "lyCity") L.city = e.target.value;
+    if (e.target.id === "lyCity") { L.city = e.target.value; if (L.city === "similar") L.simTo = state.simCandidate || L.simTo; }
     if (e.target.id === "lyPlaces") L.places = e.target.checked;
     if (e.target.id === "lyVisited") L.visited = e.target.checked;
     saveLayers(); renderMap();
-    if (e.target.id === "lyCity") $("layersPanel").innerHTML = layersHTML();
+    if (e.target.id === "lyCity" || e.target.id === "lyCountry") rerender(() => { $("layersPanel").innerHTML = layersHTML(); });
   });
   $("layersPanel").addEventListener("click", e => {
     if (e.target.closest("#lyClose")) { closeLayers(); return; }
@@ -875,12 +965,12 @@ function initMap() {
     const b = e.target.closest("[data-mode]");
     if (!b) return;
     state.layers.mode = b.dataset.mode; saveLayers();
-    $("layersPanel").innerHTML = layersHTML();
+    rerender(() => { $("layersPanel").innerHTML = layersHTML(); });
     renderMap();
   });
   $("searchForm").addEventListener("submit", e => { e.preventDefault(); runSearch($("searchInput").value.trim(), true); });
   $("searchInput").addEventListener("input", e => runSearch(e.target.value.trim(), false));
-  $("searchInput").addEventListener("focus", e => { if (e.target.value.trim()) runSearch(e.target.value.trim(), false); });
+  $("searchInput").addEventListener("focus", e => { closeLayers(); if (!quietFocus && e.target.value.trim()) runSearch(e.target.value.trim(), false); });
   $("searchResults").addEventListener("click", e => {
     const b = e.target.closest("button[data-i]");
     if (!b) return;
@@ -896,7 +986,12 @@ function initMap() {
   });
   document.addEventListener("click", e => { if (!e.target.closest(".search")) $("searchResults").hidden = true; });
   $("sheetClose").addEventListener("click", closeSheet);
-  $("sheetGrip").addEventListener("click", () => $("sheet").classList.toggle("full"));
+  $("sheetGrip").addEventListener("click", () => {
+    const c = $("sheet").classList, b = $("sheetBody");
+    if (c.contains("peek")) c.remove("peek");
+    else if (!c.contains("full") && b.scrollHeight > b.clientHeight + 1) c.add("full");
+    else { c.remove("full"); c.add("peek"); }
+  });
   $("sheetBody").addEventListener("click", onSheetClick);
 }
 
@@ -914,45 +1009,61 @@ function renderMap() {
     const col = needCities ? cityColorer() : null;
     state.cityLegend = col ? col.legend : null;
     mv.setCities(col ? col.list : null, col ? col.fn : () => null, col ? col.label : () => "");
+    if (state.fitSimilar && state.layers.city === "similar" && col) {
+      state.fitSimilar = false;
+      if (col.list.length) {
+        const t = similarTarget(), wide = innerWidth >= 860, side = wide && !$("sheet").hidden;
+        const pts = col.list.map(c => [c.lat, c.lon]).concat(t && t.x.lat != null ? [[t.x.lat, t.x.lon]] : []);
+        mv.map.invalidateSize();
+        mv.map.fitBounds(window.L.latLngBounds(pts), { paddingTopLeft: [side ? 424 : 20, 70], paddingBottomRight: [20, wide ? 40 : 110], maxZoom: 7, animate: false });
+      }
+    }
   }
   const lg = legendHTML();
   $("legendBox").hidden = !lg;
   $("legendBox").innerHTML = lg;
-  if (!local.get("introSeen", false) && $("sheet").hidden) openIntro();
+  if (!local.get("introSeen", false) && $("sheet").hidden && !state.introShown) { state.introShown = true; openIntro(); }
 }
 
 function openIntro() {
   state.sheet = { type: "intro" };
   openSheet(`<h3>Как пользоваться картой</h3>
-    <div class="help small"><span>Кружки — наши места: цвет и число — итог 1–5, где 3 — как в СПб. Квадрат — сам СПб. Несколько мест рядом собираются в кружок с числом — нажмите, чтобы приблизить.</span><span>Нажмите на страну или город — увидите мировые данные и похожие места. Найти или добавить место — поиск сверху. «Слои» — раскраска стран и городов по показателям.</span><span>После поездки — вкладка «Оценить».</span>${state.data.hasToken ? "" : `<span>Чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</span>`}</div>
+    <div class="help small"><span>Кружки — наши места: цвет и число — итог 1–5, где 3 — как в СПб; полый — своих оценок мало, итог пока по мировым данным. Квадрат — СПб. Кружок с числом — несколько мест рядом, нажмите, чтобы приблизить.</span><span>Нажмите на страну или город — увидите мировые данные и похожие места. Найти или добавить место — поиск сверху. «Слои» — раскраска стран и городов по показателям.</span><span>После поездки — вкладка «Оценить».</span>${state.data.hasToken ? "" : `<span>Чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</span>`}</div>
     <div class="btns"><button type="button" class="btn" data-act="introok">Понятно</button></div>`);
 }
 
 function refreshSheet() {
   const s = state.sheet;
   if (!s || $("sheet").hidden) return;
-  const body = $("sheetBody"), top = body.scrollTop, full = $("sheet").classList.contains("full");
+  const body = $("sheet").classList, top = $("sheetBody").scrollTop, size = ["full", "peek"].filter(c => body.contains(c));
   if (s.type === "place") { if (!state.M.PLACE[s.id]) { closeSheet(); return; } openPlace(s.id); }
   else if (s.type === "country") openCountry(s.iso, s.latlng);
   else return;
-  body.scrollTop = top;
-  $("sheet").classList.toggle("full", full);
+  if (s.sim) { state.sheet.sim = s.sim; showSim(s.sim); }
+  $("sheetBody").scrollTop = top;
+  size.forEach(c => body.add(c));
 }
 
 /* ---------- search ---------- */
-let searchTimer = null, searchSeq = 0;
+let searchTimer = null, searchSeq = 0, quietFocus = false;
+const normQ = s => String(s || "").toLowerCase().replace(/ё/g, "е");
 function runSearch(q, remote) {
   const box = $("searchResults");
   const seq = ++searchSeq;
   clearTimeout(searchTimer);
   if (!q) { box.hidden = true; return; }
-  const ql = q.toLowerCase();
+  const ql = normQ(q);
   const items = [];
   const ours = state.M.places.filter(p => p.lat != null);
   const near = (x, km) => ours.some(p => haversine(p, x) < km);
-  state.M.places.filter(p => p.name.toLowerCase().includes(ql)).slice(0, 4).forEach(p => items.push({ type: "place", id: p.id, title: p.name, sub: p.country || "" }));
-  if (state.world.cities) state.world.cities.filter(c => (c.n.toLowerCase().startsWith(ql) || (c.en && c.en.toLowerCase().startsWith(ql))) && !near(c, 5)).slice(0, 5).forEach(c => items.push({ type: "city", city: c, title: c.n, sub: state.world.nameOf(c.cc) + (c.pop ? " · " + Math.round(c.pop / 1000).toLocaleString("ru-RU") + " тыс. жителей" : "") }));
-  else state.world.loadCities();
+  const ownOf = c => ours.find(p => haversine(p, c) < 5);
+  const cities = state.world.cities ? state.world.cities.filter(c => normQ(c.n).startsWith(ql) || (c.en && normQ(c.en).startsWith(ql))) : [];
+  if (!state.world.cities) state.world.loadCities();
+  const mine = state.M.places.filter(p => normQ(p.name).includes(ql));
+  cities.forEach(c => { const p = ownOf(c); if (p && !mine.includes(p)) mine.push(p); });
+  mine.slice(0, 4).forEach(p => items.push({ type: "place", id: p.id, title: p.name, sub: p.country || "" }));
+  const exact = c => (normQ(c.n) === ql || normQ(c.en) === ql ? 1 : 0);
+  cities.filter(c => !ownOf(c)).sort((a, b) => exact(b) - exact(a)).slice(0, 5).forEach(c => items.push({ type: "city", city: c, title: c.n, sub: state.world.nameOf(c.cc) + (c.pop ? " · " + Math.round(c.pop / 1000).toLocaleString("ru-RU") + " тыс. жителей" : "") }));
   const GROUP = { place: "Наши места", city: "Города мира", geo: "OpenStreetMap", remote: "" };
   const show = (extra, note) => {
     state.searchItems = items.concat(extra || []);
@@ -973,6 +1084,8 @@ function runSearch(q, remote) {
   search(q).then(res => {
     if (seq !== searchSeq) return;
     const fresh = res.filter(g => !near(g, 3));
+    const kept = items.filter(it => it.type !== "city" || !fresh.some(g => haversine(it.city, g) < 5));
+    items.splice(0, items.length, ...kept);
     show(fresh.map(g => ({ type: "geo", geo: g, title: g.name, sub: g.label })), fresh.length ? "Поиск: Nominatim, данные © OpenStreetMap" : res.length ? "Всё найденное уже есть среди наших мест" : "Ничего не нашлось");
   }).catch(err => { if (seq === searchSeq) show([], esc(err.message)); });
 }
@@ -981,13 +1094,15 @@ function runSearch(q, remote) {
 function openSheet(html) {
   $("sheetBody").innerHTML = html;
   $("sheet").hidden = false;
-  $("sheet").classList.remove("full");
+  $("sheetBody").scrollTop = 0;
+  $("sheet").classList.remove("full", "peek");
   $("layersPanel").hidden = true;
   $("layersBtn").setAttribute("aria-expanded", "false");
 }
 
 function closeLayers() {
   if ($("layersPanel").hidden) return;
+  if ($("layersPanel").contains(document.activeElement)) $("layersBtn").focus();
   $("layersPanel").hidden = true;
   $("layersBtn").setAttribute("aria-expanded", "false");
 }
@@ -1010,6 +1125,7 @@ function openPlace(id, fly) {
   const M = state.M, p = M.PLACE[id];
   if (!p) return;
   state.sheet = { type: "place", id };
+  state.simCandidate = { type: "place", id };
   const rs = M.ratingsOf(p.id).filter(r => r.review && !M.hidden(p.id, r.who)).slice(-3).reverse();
   const hid = hiddenWho(M, p.id);
   const years = yearsLine(M, p.id);
@@ -1044,6 +1160,7 @@ function openCountry(iso, latlng) {
 function openCity(c, fly) {
   const Wd = state.world;
   state.sheet = { type: "city", city: c };
+  state.simCandidate = { type: "city", id: c.id };
   const own = state.M.places.find(p => p.lat != null && haversine(p, c) < 5);
   const pf = Wd.cities ? predictor() : null, pr = pf && pf({ cc: c.cc, city: c });
   openSheet(`<h3>${esc(c.n)}</h3>
@@ -1060,10 +1177,11 @@ function openCity(c, fly) {
 function openGeo(g) {
   state.sheet = { type: "geo", geo: g };
   const iso = state.world.iso3of(g.cc2);
+  const city = (state.world.cities || []).find(c => haversine(c, g) < 5);
   state.mapView.showTemp(g.lat, g.lon);
   openSheet(`<h3>${esc(g.name)}</h3>
     <p class="small muted">${esc(g.label)}</p>
-    <div class="btns"><button type="button" class="btn" data-act="addgeo">Добавить место</button>${iso ? `<button type="button" class="btn ghost" data-act="country" data-iso="${iso}">О стране</button>` : ""}</div>
+    <div class="btns"><button type="button" class="btn" data-act="addgeo">Добавить место</button>${iso ? `<button type="button" class="btn ghost" data-act="country" data-iso="${iso}">О стране</button>` : ""}${city ? `<button type="button" class="btn ghost" data-city="${city.id}">Климат и похожие</button>` : ""}</div>
     <p class="small muted">Поиск: Nominatim, данные © OpenStreetMap</p>`);
   state.mapView.flyTo(g.lat, g.lon, 10);
 }
@@ -1084,7 +1202,12 @@ async function addPlace(info) {
     rebuild();
     renderMap();
     openPlace(saved.id, false);
-  } catch (err) { toast(err.message); }
+  } catch (err) {
+    if (err.code !== "clash") { toast(err.message); return; }
+    rebuild(); renderMap();
+    const p = state.M.places.find(x => x.lat != null && haversine(x, info) < 3) || state.M.PLACE[(err.paths || [""])[0].replace(/^places\/|\.json$/g, "")];
+    if (p) { toast("Это место уже есть: " + p.name); openPlace(p.id, true); } else toast("Это только что изменили на другом устройстве. Попробуйте ещё раз.");
+  }
 }
 
 async function onSheetClick(e) {
@@ -1114,25 +1237,31 @@ async function onSheetClick(e) {
   } else if (act === "country") {
     const iso = b.dataset.iso; const g = state.sheet.geo;
     openCountry(iso, { lat: g.lat, lng: g.lon });
-  } else if (act === "simcountry") {
-    if (!state.sim) state.sim = new Similar(Wd, state.schema.groups);
-    $("simCountryBox").innerHTML = `<h2 style="margin:4px 0">Похожие страны · веса «${esc(state.preset)}»</h2>` + similarCountriesHTML(state.sim.similarCountries(b.dataset.iso, W(), 8));
-  } else if (act === "simcity" || act === "simplace") {
-    await Wd.loadCities();
-    if (!state.sim) state.sim = new Similar(Wd, state.schema.groups);
-    let x, boxId;
-    let to;
-    if (act === "simcity") { const c = state.sheet.city; x = { cc: c.cc, city: c, lat: c.lat, lon: c.lon }; to = { type: "city", id: c.id }; boxId = "simCityBox"; }
-    else { const p = state.M.PLACE[b.dataset.id]; const city = Wd.placeCity(p); x = { cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }; to = { type: "place", id: p.id }; boxId = "simPlaceBox"; }
-    state.simCandidate = to;
-    const sp = state.sim.similarSplit(x, W(), { home: 3, abroad: 6 });
-    const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(state.preset)}»</h2>` + similarSplitHTML(sp, x.cc) + `<div class="btns" style="margin-top:8px"><button type="button" class="btn ghost small" data-act="simshow">Показать все на карте</button></div>`;
-    if ($(boxId)) $(boxId).innerHTML = html;
+  } else if (act === "simcountry" || act === "simcity" || act === "simplace") {
+    const sheet = state.sheet;
+    if (act !== "simcountry") await Wd.loadCities();
+    if (state.sheet !== sheet) return;
+    const sim = act === "simcountry" ? { act, iso: b.dataset.iso } : act === "simcity" ? { act, city: sheet.city } : { act, id: b.dataset.id };
+    sheet.sim = sim;
+    showSim(sim);
   } else if (act === "simshow" && state.simCandidate) {
-    state.layers.simTo = state.simCandidate; state.layers.city = "similar"; saveLayers();
+    state.layers.simTo = state.simCandidate; state.layers.city = "similar"; state.fitSimilar = true; saveLayers();
+    if (innerWidth < 860) closeSheet();
     renderMap();
     toast("На карте: похожие города, ярче — похожее");
   }
+}
+
+function showSim(sim) {
+  const Wd = state.world;
+  if (!state.sim) state.sim = new Similar(Wd, state.schema.groups);
+  if (sim.act === "simcountry") { if ($("simCountryBox")) $("simCountryBox").innerHTML = `<h2 style="margin:4px 0">Похожие страны · веса «${esc(state.preset)}»</h2>` + similarCountriesHTML(state.sim.similarCountries(sim.iso, W(), 8)); return; }
+  let x, boxId;
+  if (sim.act === "simcity") { const c = sim.city; x = { cc: c.cc, city: c, lat: c.lat, lon: c.lon }; state.simCandidate = { type: "city", id: c.id }; boxId = "simCityBox"; }
+  else { const p = state.M.PLACE[sim.id]; if (!p) return; const city = Wd.placeCity(p); x = { cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }; state.simCandidate = { type: "place", id: p.id }; boxId = "simPlaceBox"; }
+  const sp = state.sim.similarSplit(x, W(), { home: 3, abroad: 6 });
+  const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(state.preset)}»</h2>` + similarSplitHTML(sp, x.cc) + `<div class="btns" style="margin-top:8px"><button type="button" class="btn ghost small" data-act="simshow">Показать все на карте</button></div>`;
+  if ($(boxId)) $(boxId).innerHTML = html;
 }
 
 /* ---------- theme ---------- */
@@ -1143,6 +1272,7 @@ function setTheme(t) {
 function applyTheme() {
   const t = local.get("theme", "auto");
   if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t);
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => { if (m.dataset.orig == null) m.dataset.orig = m.content; m.content = t === "auto" ? m.dataset.orig : t === "dark" ? "#0f1113" : "#f1f3f4"; });
   refreshPalette();
   if (state.schema && state.route.name === "map") renderMap();
   const btn = $("themeBtn");
@@ -1178,23 +1308,23 @@ async function boot() {
     const d = state.data;
     if (d.flushed) { toast("Отправлено из очереди: " + d.flushed); savedNow("sent"); d.flushed = 0; }
     rebuild();
-    if (state.route.name === "rate") { renderSync(); if (state.form) state.form.setPlaces(state.M.places); if ($("rateBanner")) $("rateBanner").innerHTML = bannerHTML(); }
+    if (state.route.name === "rate") { renderSync(); if (state.form) state.form.setPlaces(state.M.places); if ($("rateBanner")) $("rateBanner").innerHTML = bannerHTML(); openPendingEdit(); }
     else if (state.dirty && (state.route.name === "place" || state.route.name === "settings")) renderSync();
-    else render();
+    else rerender(render);
   });
   $("themeBtn").addEventListener("click", () => {
     const order = ["auto", "light", "dark"], t = order[(order.indexOf(local.get("theme", "auto")) + 1) % 3];
     setTheme(t);
     toast("Тема: " + ({ auto: "как в системе", light: "светлая", dark: "тёмная" })[t]);
-    if (state.route.name === "settings") renderSettings();
+    if (state.route.name === "settings") rerender(renderSettings);
   });
-  $("syncBtn").addEventListener("click", () => { if (!state.data.hasToken) go("#/settings"); else state.data.refresh(); });
+  $("syncBtn").addEventListener("click", () => { if (!state.data.hasToken) go("#/settings"); else if (state.route.name === "map" && state.data.status === "live" && state.data.lost.length) go("#/rank"); else state.data.refresh(); });
   document.addEventListener("click", e => {
     if (e.target.closest("[data-dismiss-notice]")) { state.data.notice = ""; state.data.emit(); return; }
     const rv = e.target.closest("[data-reveal]");
-    if (rv) { state.revealed.add(rv.dataset.reveal); local.set("revealed", [...state.revealed]); rebuild(); render(); return; }
+    if (rv) { state.revealed.add(rv.dataset.reveal); local.set("revealed", [...state.revealed]); rebuild(); rerender(render); return; }
     const sm = e.target.closest("[data-setme]");
-    if (sm) { local.set("me", sm.dataset.setme); rebuild(); render(); toast("Это устройство: " + sm.dataset.setme); return; }
+    if (sm) { setMe(sm.dataset.setme); rerender(render); toast("Это устройство: " + sm.dataset.setme); return; }
     const la = e.target.closest("[data-lostapply]");
     if (la) {
       la.closest(".lost").querySelectorAll("button").forEach(b => { b.disabled = true; });
@@ -1204,10 +1334,10 @@ async function boot() {
     const ld = e.target.closest("[data-lostdrop]");
     if (ld) { state.data.dropLost(Number(ld.dataset.lostdrop)); }
   });
-  addEventListener("hashchange", route);
-  document.addEventListener("click", e => { const a = e.target.closest("a[data-nav]"); if (a && a.getAttribute("href") === location.hash) { e.preventDefault(); route(); } });
+  addEventListener("hashchange", () => route());
+  document.addEventListener("click", e => { const a = e.target.closest("a[data-nav]"); if (a && a.getAttribute("href") === location.hash) { e.preventDefault(); route(true); } });
   route();
-  state.world.loadCities().then(() => { state.sim = null; rebuild(); if (state.route.name !== "rate" && !state.dirty) render(); });
+  state.world.loadCities().then(() => { state.sim = null; rebuild(); if (!["rate", "settings"].includes(state.route.name) && !state.dirty) rerender(render); });
   setInterval(() => { if (document.visibilityState === "visible") state.data.poll(); }, 60000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") state.data.poll(); });
   if (state.data.hasToken) await state.data.refresh();

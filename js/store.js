@@ -182,7 +182,7 @@ export class GitHubStore {
         const done = c.content == null ? cur == null : cur === (await blobOid(c.content));
         if (!done) clash.push(c.path);
       }
-      if (clash.length) throw Object.assign(new StoreError("clash", "Это только что изменили с другого телефона: " + clash.join(", ")), { paths: clash });
+      if (clash.length) throw Object.assign(new StoreError("clash", "Это только что изменили на другом устройстве"), { paths: clash });
       if (!todo.length) return this.head;
       try {
         let oid;

@@ -1,4 +1,4 @@
-const VERSION = "wtl-v10";
+const VERSION = "wtl-v11";
 const SHELL = [
   "./",
   "index.html",
@@ -22,6 +22,31 @@ const SHELL = [
   "data/world/countries.geojson",
   "data/world/indicators.json",
   "icons/icon.svg",
+  "icons/icon-180.png",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
+  "data/world/cities.json",
+  "vendor/fonts/GolosText-400-cyrillic.woff2",
+  "vendor/fonts/GolosText-400-latin-ext.woff2",
+  "vendor/fonts/GolosText-400-latin.woff2",
+  "vendor/fonts/GolosText-500-cyrillic.woff2",
+  "vendor/fonts/GolosText-500-latin-ext.woff2",
+  "vendor/fonts/GolosText-500-latin.woff2",
+  "vendor/fonts/GolosText-600-cyrillic.woff2",
+  "vendor/fonts/GolosText-600-latin-ext.woff2",
+  "vendor/fonts/GolosText-600-latin.woff2",
+  "vendor/fonts/IBMPlexMono-400-cyrillic.woff2",
+  "vendor/fonts/IBMPlexMono-400-latin-ext.woff2",
+  "vendor/fonts/IBMPlexMono-400-latin.woff2",
+  "vendor/fonts/IBMPlexMono-500-cyrillic.woff2",
+  "vendor/fonts/IBMPlexMono-500-latin-ext.woff2",
+  "vendor/fonts/IBMPlexMono-500-latin.woff2",
+  "vendor/fonts/Unbounded-500-cyrillic.woff2",
+  "vendor/fonts/Unbounded-500-latin-ext.woff2",
+  "vendor/fonts/Unbounded-500-latin.woff2",
+  "vendor/fonts/Unbounded-700-cyrillic.woff2",
+  "vendor/fonts/Unbounded-700-latin-ext.woff2",
+  "vendor/fonts/Unbounded-700-latin.woff2",
 ];
 
 self.addEventListener("install", e => {
@@ -46,6 +71,6 @@ self.addEventListener("fetch", e => {
       e.waitUntil(net.catch(() => {}));
       return hit;
     }
-    return net.catch(() => cache.match("index.html"));
+    return net.catch(() => (req.mode === "navigate" ? cache.match("index.html") : Response.error()));
   }));
 });

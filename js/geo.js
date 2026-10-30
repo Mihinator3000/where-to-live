@@ -1,6 +1,9 @@
 const NOMINATIM = "https://nominatim.openstreetmap.org";
 let last = 0;
 
+const OFFLINE = "Нет связи: поиск по OpenStreetMap недоступен";
+const get = url => fetch(url, { headers: { Accept: "application/json" } }).catch(() => { throw new Error(OFFLINE); });
+
 async function throttle() {
   const wait = last + 1100 - Date.now();
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
@@ -29,7 +32,7 @@ function norm(r) {
 export async function search(q) {
   await throttle();
   const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&accept-language=ru&q=${encodeURIComponent(q)}`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await get(url);
   if (!res.ok) throw new Error("Поиск недоступен (" + res.status + ")");
   const out = [];
   (await res.json()).map(norm).forEach(g => { if (!out.some(o => o.name === g.name && Math.abs(o.lat - g.lat) < 0.02 && Math.abs(o.lon - g.lon) < 0.03)) out.push(g); });
@@ -39,7 +42,7 @@ export async function search(q) {
 export async function reverse(lat, lon) {
   await throttle();
   const url = `${NOMINATIM}/reverse?format=jsonv2&addressdetails=1&zoom=10&accept-language=ru&lat=${lat}&lon=${lon}`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await get(url);
   if (!res.ok) throw new Error("Поиск недоступен (" + res.status + ")");
   const r = await res.json();
   if (r.error) return null;

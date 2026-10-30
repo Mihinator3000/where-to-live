@@ -21,7 +21,7 @@ export const CITY_INDICATORS = [
   { key: "warm", name: "Месяцев со средней ≥ 18 °C", short: "Тёплых мес.", group: "climate", unit: "мес", fmt: 0, dir: 0, cats: [], get: c => (okArr(c.t) ? c.t.filter(v => v >= 18).length : null) },
   { key: "rain", name: "Осадки за год, мм", short: "Осадки", group: "climate", unit: "мм", fmt: 0, dir: 0, cats: [], note: "модель, у моря и в горах часто завышена", get: c => (okArr(c.p) ? sum(c.p) : null) },
   { key: "cloud_win", name: "Облачность ноябрь–февраль, %", short: "Тучи зимой", group: "climate", unit: "%", fmt: 0, dir: -1, scale: { type: "lin", step: 8 }, cats: ["свет"], get: c => (okArr(c.c) ? (c.c[10] + c.c[11] + c.c[0] + c.c[1]) / 4 : null) },
-  { key: "day_dec", name: "Световой день 21 декабря, ч", short: "Свет 21.12", group: "climate", unit: "ч", fmt: 1, dir: 1, scale: { type: "lin", step: 1.5 }, cats: ["свет"], get: c => daylight(c.lat) },
+  { key: "day_dec", name: "Световой день 21 декабря, ч", short: "Свет 21.12", group: "climate", unit: "ч", fmt: 1, dir: 1, scale: { type: "lin", step: 1.5 }, cats: ["свет"], get: c => (c.lat == null ? null : daylight(c.lat)) },
   { key: "tz_msk", name: "Разница с Москвой зимой, ч", short: "Пояс", group: "work", unit: "ч", fmt: 0, dir: -1, scale: { type: "abs", points: [[0, 3], [1, 2.75], [2, 2.5], [4, 2], [6, 1.5], [8, 1]] }, cats: ["часовой_пояс"], get: c => (c.tz == null ? null : Math.abs(c.tz)) },
   { key: "air_km", name: "До аэропорта с регулярными рейсами, км", short: "Аэропорт", group: "links", unit: "км", fmt: 0, dir: -1, scale: { type: "abs", points: [[15, 5], [40, 4], [90, 3], [180, 2], [350, 1]] }, cats: ["аэропорт"], get: c => c.air },
   { key: "pop", name: "Население", short: "Население", group: "city", unit: "", fmt: 0, dir: 0, cats: [], get: c => c.pop || null },
@@ -40,7 +40,7 @@ function interp(points, x) {
 }
 
 export function toScore(ind, v, ref) {
-  if (v == null || !ind.scale || !ind.dir && ind.scale.type !== "abs") return null;
+  if (v == null || !Number.isFinite(v) || !ind.scale || !ind.dir && ind.scale.type !== "abs") return null;
   const s = ind.scale;
   let out;
   if (s.type === "abs") out = interp(s.points, v);
@@ -149,7 +149,10 @@ export class World {
 
   placeCity(place) {
     if (!place || place.lat == null) return null;
-    return this.nearestCity(place, 30) || this.pointCity(place);
+    if (this.pcFor !== this.cities) { this.pc = new Map(); this.pcFor = this.cities; }
+    const k = place.lat + "," + place.lon;
+    if (!this.pc.has(k)) this.pc.set(k, this.nearestCity(place, 30) || this.pointCity(place));
+    return this.pc.get(k);
   }
 
   pointCity(place) {
