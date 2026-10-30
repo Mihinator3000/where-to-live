@@ -44,7 +44,7 @@ export function toScore(ind, v, ref) {
   const s = ind.scale;
   let out;
   if (s.type === "abs") out = interp(s.points, v);
-  else if (ref == null) return null;
+  else if (ref == null || !Number.isFinite(ref)) return null;
   else if (s.type === "log") { if (v <= 0 || ref <= 0) return null; out = 3 + ind.dir * (Math.log(v) - Math.log(ref)) / s.step; }
   else out = 3 + ind.dir * (v - ref) / s.step;
   return Math.max(1, Math.min(5, out));

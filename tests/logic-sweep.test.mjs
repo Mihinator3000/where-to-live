@@ -2,7 +2,7 @@ import "./helpers/env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createModel, normalize } from "../js/calc.js";
+import { createModel, normalize, gen } from "../js/calc.js";
 import { toScore, haversine, CITY_INDICATORS, World, SPB } from "../js/world.js";
 import { Similar } from "../js/similar.js";
 import { daysBetween } from "../js/util.js";
@@ -80,7 +80,7 @@ async function factNumberParser() {
   const m = APP_SRC.match(/const v = ([^\n;]*cur\.raw[^\n;]*);/);
   assert.ok(m, "the «Цифры места» number parser (const v = …cur.raw…) was not found in js/app.js");
   const expr = m[1];
-  const util = await import(new URL("../js/util.js", import.meta.url));
+  const util = Object.assign({}, await import(new URL("../js/util.js", import.meta.url)), await import(new URL("../js/facts.js", import.meta.url)).catch(() => ({})));
   const defs = [], scope = {};
   for (const n of new Set([...expr.matchAll(/\b([A-Za-z_$][\w$]*)\(/g)].map(x => x[1]))) {
     const f = liftFunction(APP_SRC, n) || liftConst(APP_SRC, n);
@@ -234,7 +234,7 @@ test("a vetoed or screened-out place leaves the ranking and the reason is shown"
   const M = build({ places: [a, b, c], ratings: [rating("alpha", PARTNER, stars(STARS), { veto: "сыро зимой" }), rating("gamma", ME, stars(STARS))] }, { autoData: everywhere(3) });
   assert.deepEqual(M.candidates().map(p => p.id), ["gamma"]);
   const t = text(rankHTML(M, EQUAL));
-  assert.match(t, new RegExp(`Отсев: .*Альфа — вето ${PARTNER}: сыро зимой`));
+  assert.match(t, new RegExp(`Отсев: .*Альфа — вето ${gen(PARTNER)}: сыро зимой`));
   assert.match(t, /Бета — без причины/);
   assert.equal(M.allFlags()[0].sev, "crit");
   assert.match(M.allFlags()[0].head, /Альфа: вето/);
@@ -320,7 +320,7 @@ test("the partner's rating of a place stays hidden until I rate it myself", () =
   assert.match(trips, /Показать всё равно/);
   assert.doesNotMatch(trips, /Секретный отзыв/);
   assert.equal(yearsLine(M, "alpha"), "");
-  assert.match(text(placesListHTML(M, EQUAL, "")), new RegExp(`оценка ${PARTNER} скрыта до вашей`));
+  assert.match(text(placesListHTML(M, EQUAL, "")), new RegExp(`оценка ${gen(PARTNER)} скрыта до вашей`));
 });
 
 test("once I rate the place, the partner's rating becomes visible", () => {
@@ -343,7 +343,7 @@ test("a hidden partner's red flag is not shown but is counted in «Ещё N»", 
   assert.equal(M.full.allFlags().filter(f => f.sev === "crit").length, 1);
   const f = flagsHTML(M);
   assert.equal(f.count, 0);
-  assert.match(text(f.html), /Ещё 1 — по местам, которые вы сами пока не оценили/);
+  assert.match(text(f.html), /Ещё 1 флаг скрыт — по местам, которые вы сами пока не оценили/);
 });
 
 test("the hidden partner's scores do not move the place's total", () => {

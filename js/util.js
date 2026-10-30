@@ -8,11 +8,11 @@ export const local = {
   del(k) { try { localStorage.removeItem("wtl:" + k); } catch (e) {} },
 };
 
-const RU = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya" };
+const RU = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya", ђ: "dj", ј: "j", љ: "lj", њ: "nj", ћ: "c", џ: "dz", ѓ: "g", ќ: "k", і: "i", ї: "i", є: "e", ґ: "g", đ: "dj", ı: "i", ł: "l", ø: "o", ß: "ss", æ: "ae", œ: "oe" };
 
 export function slug(s) {
   const t = String(s || "").toLowerCase().split("").map(ch => (RU[ch] != null ? RU[ch] : ch)).join("");
-  return t.normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "place";
+  return t.normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 40).replace(/-+$/, "") || "place";
 }
 
 export function uid(prefix) {
@@ -28,8 +28,10 @@ export function toast(text) {
   t.textContent = text;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
+  toastTimer = setTimeout(() => { t.hidden = true; }, Math.max(3500, Math.min(9000, String(text).length * 60)));
 }
+
+export const todayISO = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many;
 
@@ -40,7 +42,7 @@ export function daysBetween(a, b) {
 }
 
 export function scoreColor(v) {
-  if (v == null) return "var(--none)";
+  if (!Number.isFinite(v)) return "var(--none)";
   const d = Math.max(-1, Math.min(1, (v - 3) / 2));
   const pole = d >= 0 ? "var(--pos)" : "var(--neg)";
   return `color-mix(in oklab, ${pole} ${Math.round(25 + Math.abs(d) * 75)}%, var(--mid))`;
@@ -60,7 +62,7 @@ export function refreshPalette() {
 export const pal = () => palette || refreshPalette();
 export function scoreHex(v) {
   const p = pal();
-  if (v == null) return p.none;
+  if (!Number.isFinite(v)) return p.none;
   const d = Math.max(-1, Math.min(1, (v - 3) / 2));
   return mixHex(p.mid, d >= 0 ? p.pos : p.neg, 0.25 + Math.abs(d) * 0.75);
 }
@@ -70,6 +72,7 @@ const lumHex = h => { const [r, g, b] = hex2rgb(h).map(lin); return 0.2126 * r +
 export const inkOn = h => { const l = lumHex(h) + 0.05; return 1.05 / l >= l / 0.05 ? "#ffffff" : "#000000"; };
 export function heatHex(v) {
   const p = pal();
+  if (!Number.isFinite(v)) return p.none;
   const d = Math.max(-1, Math.min(1, (v - 3) / 2));
   return mixHex(p.mid, d >= 0 ? p.pos : p.neg, Math.abs(d));
 }

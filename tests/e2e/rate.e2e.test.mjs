@@ -166,10 +166,10 @@ test("season, work and housing buttons switch off when tapped again", { skip }, 
 test("a half point shows as a decimal next to the question and is saved as a number", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi" });
   await score("чистота", 2.5);
-  assert.equal(await qval("чистота"), "2,5");
+  assert.equal(await qval("чистота"), "2.5");
   assert.equal(await page.eval(`document.querySelector('[data-score="чистота"][data-v="2.5"]').getAttribute("aria-label")`), "2,5");
   await score("чистота", 3.5);
-  assert.equal(await qval("чистота"), "3,5", "a second value replaces the first");
+  assert.equal(await qval("чистота"), "3.5", "a second value replaces the first");
   await saveAndLand("batumi");
   assert.deepEqual((await ratingsOn("batumi"))[0].scores, { "чистота": 3.5 });
 });
@@ -245,12 +245,12 @@ test("a group comment opens on demand, takes the typing and is saved trimmed", {
 
 test("the star counter counts main and extra answers separately, and so do the groups", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi" });
-  assert.equal(await page.text("#fCounts"), "★ 0 из 10");
+  assert.equal(await page.text("#fCounts"), "главные ★ 0 из 10");
   await score("пешком", 4);
   await score("чистота", 3);
   await press("#fShowAll");
   await score("магазины", 4.5);
-  assert.equal(await page.text("#fCounts"), "★ 2 из 10 · ещё 1");
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · ещё 1");
   assert.equal(await page.text("#gc-city"), "· 3 из 8");
 });
 
@@ -368,7 +368,7 @@ test("an empty form is not saved and the message says what is missing", { skip }
   await fresh({ hash: "#/rate/new/batumi" });
   await press('[data-opt="season"][data-val="пик"]');
   await press("#fSave");
-  assert.equal(await page.text("#fMsg"), "Поставьте хотя бы одну оценку.");
+  assert.equal(await page.text("#fMsg"), "Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.");
   assert.equal(await page.eval(`document.getElementById("fMsg").classList.contains("err")`), true);
   assert.deepEqual(await mockLog(page), []);
 });
@@ -394,7 +394,7 @@ test("a veto alone is enough to save a rating", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi" });
   await page.fill("#fVeto", "Жара +40 всё лето");
   await press("#fSave");
-  assert.notEqual(await page.text("#fMsg"), "Поставьте хотя бы одну оценку.", "«место отпадает совсем» is a complete answer");
+  assert.notEqual(await page.text("#fMsg"), "Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.", "«место отпадает совсем» is a complete answer");
   await page.waitFor(`location.hash === "#/place/batumi"`, 5000, "dossier");
   assert.equal((await ratingsOn("batumi"))[0].veto, "Жара +40 всё лето");
 });
@@ -473,9 +473,9 @@ test("editing a rating loads every saved answer back into the form", { skip }, a
   assert.equal(await page.eval(`document.getElementById("fRetro").checked`), false);
   assert.deepEqual(await pressed("[data-opt]"), ["межсезон", "отпуск", "туристическая зона"]);
   assert.deepEqual(await pressed("[data-year]"), ["0"]);
-  assert.equal(await qval("шум"), "1,5");
+  assert.equal(await qval("шум"), "1.5");
   assert.equal(await qval("море"), "4");
-  assert.equal(await qval("доставка"), "2,5");
+  assert.equal(await qval("доставка"), "2.5");
   assert.ok((await shownQuestions()).includes("доставка"), "an answered extra question is shown even in main-questions mode");
   assert.equal(await page.text('[data-conf="шум"]'), "откуда знаем: проверили в быту");
   assert.equal(await page.text('[data-conf="море"]'), "откуда знаем: по сайтам и рейтингам");
@@ -515,7 +515,7 @@ test("«Новая оценка» parks the unsaved edit as a draft that can be 
   assert.equal(await val("#fPlace"), "");
   assert.equal(await page.eval(`document.getElementById("fPlace").disabled`), false);
   assert.equal(await page.text("#fSave"), "Сохранить");
-  assert.deepEqual(await chips(), ["правка: Порту (6)"]);
+  assert.deepEqual(await chips(), ["правка: Порту (6 ответов)"]);
   await page.tap({ sel: ".draft-chip .linkbtn" });
   assert.match(await page.text(".edit-head"), /Правка оценки: Порту/);
   assert.equal(await qval("шум"), "2", "my unsaved change is still there");
@@ -592,7 +592,7 @@ test("the «у вас уже есть оценка» banner opens my earlier rat
   await page.waitFor(`document.querySelector(".edit-head")`, 4000, "edit form");
   assert.equal(await page.text("#fSave"), "Сохранить правку");
   assert.equal(await qval("эстетика"), "5", "my earlier answers are loaded");
-  assert.deepEqual(await chips(), ["Порту (1)"], "the new trip I started is parked, not lost");
+  assert.deepEqual(await chips(), ["Порту (1 ответ)"], "the new trip I started is parked, not lost");
 });
 
 /* ---------- drafts ---------- */
@@ -604,13 +604,13 @@ test("drafts for different places are kept apart and the chips switch between th
   await page.goto(srv.url + "#/rate/new/valensiya", 300);
   assert.equal(await val("#fReview"), "", "a new place starts clean");
   await score("море", 5);
-  assert.deepEqual(await chips(), ["Батуми (1)"]);
+  assert.deepEqual(await chips(), ["Батуми (1 ответ)"]);
   await page.tap({ sel: ".draft-chip .linkbtn" });
   assert.equal(await val("#fPlace"), "batumi");
   assert.equal(await val("#fReview"), "Про Батуми");
   assert.equal(await qval("интернет"), "4");
   assert.equal(await qval("море"), "");
-  assert.deepEqual(await chips(), ["Валенсия (1)"]);
+  assert.deepEqual(await chips(), ["Валенсия (1 ответ)"]);
 });
 
 test("two unsaved drafts for the same place can both be reached from the chips", { skip }, async () => {
@@ -620,11 +620,11 @@ test("two unsaved drafts for the same place can both be reached from the chips",
   await score("улица", 2);
   await score("шум", 2);
   await page.select("#fPlace", "Батуми");
-  assert.equal(await page.text("#fCounts"), "★ 2 из 10");
-  assert.deepEqual(await chips(), ["Батуми (1)"]);
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10");
+  assert.deepEqual(await chips(), ["Батуми (1 ответ)"]);
   await page.tap({ sel: ".draft-chip .linkbtn" });
-  assert.equal(await page.text("#fCounts"), "★ 1 из 10");
-  assert.deepEqual(await chips(), ["Батуми (2)"], "the chip leads to the other draft, not to the one I am in");
+  assert.equal(await page.text("#fCounts"), "главные ★ 1 из 10");
+  assert.deepEqual(await chips(), ["Батуми (2 ответа)"], "the chip leads to the other draft, not to the one I am in");
 });
 
 test("an unsaved rating survives a reload", { skip }, async () => {
@@ -657,7 +657,7 @@ test("an edit in progress survives a reload and is still saved as the same ratin
   await page.waitFor(`(localStorage.getItem("wtl:draft") || "").includes('"шум":1.5')`, 3000, "draft written");
   await reload();
   assert.match(await page.text(".edit-head"), /Правка оценки: Порту/);
-  assert.equal(await qval("шум"), "1,5");
+  assert.equal(await qval("шум"), "1.5");
   await saveAndLand("porto");
   const r = await docAt("ratings/r1.json");
   assert.equal(r.scores["шум"], 1.5);
@@ -696,7 +696,7 @@ test("reopening an edit parked as a draft after another device changed it does n
   await page.eval(`(async () => { await (await import("./js/app.js")).state.data.refresh(); })()`);
   await openEdit("porto");
   assert.equal(await val("#fSurprises"), "с другого устройства", "the reopened form is the newer version");
-  assert.deepEqual(await chips(), ["правка: Порту (5)"], "my unsaved edit is kept as a draft");
+  assert.deepEqual(await chips(), ["правка: Порту (5 ответов)"], "my unsaved edit is kept as a draft");
   await score("интернет", 2);
   await saveAndLand("porto");
   const r = await docAt("ratings/r1.json");
@@ -809,7 +809,7 @@ test("in dark mode the error under the save button and «Удалить оцен
   await press("#fReset");
   await press("#fReset");
   await press("#fSave");
-  assert.equal(await page.text("#fMsg"), "Поставьте хотя бы одну оценку.");
+  assert.equal(await page.text("#fMsg"), "Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.");
   const msg = await page.eval(CONTRAST("#fMsg"));
   assert.ok(msg >= 4.5, `error text contrast ${msg}:1 is below 4.5:1`);
   assert.ok(del >= 4.5, `«Удалить оценку» contrast ${del}:1 is below 4.5:1`);

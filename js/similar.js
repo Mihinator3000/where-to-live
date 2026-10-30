@@ -12,6 +12,7 @@ function clipNorm(values, log) {
   };
 }
 
+const REASON = { price_level: "уровень цен", usd_prices: "рост цен в $", uhc: "медпомощь", pm25: "воздух (PM2.5)", homicide: "убийства", wgi_pv: "стабильность", quake: "землетрясения", wgi_cc: "коррупция", wgi_ge: "госуправление", free_speech: "свобода слова", ru_visa: "безвиз" };
 const KG_LABEL = { A: "тропики", B: "сухой", C: "умеренный", D: "континентальный", E: "полярный" };
 export const kgName = kg => (kg ? `${kg} · ${KG_LABEL[kg[0]] || ""}`.trim() : "—");
 
@@ -29,7 +30,7 @@ export class Similar {
     W.indicators.forEach(ind => {
       const all = Object.keys(W.countries).map(iso => { const r = W.raw(iso, ind.key); return r ? r[0] : null; });
       const f = clipNorm(all, ind.scale && ind.scale.type === "log");
-      if (f) this.cfeat.push({ key: ind.key, name: ind.short || ind.name, group: ind.group, norm: f });
+      if (f) this.cfeat.push({ key: ind.key, name: REASON[ind.key] || String(ind.short || ind.name).replace(/\.$/, "").toLowerCase(), group: ind.group, norm: f });
     });
     this.countryVec = {};
     Object.keys(W.countries).forEach(iso => {
@@ -114,10 +115,11 @@ export class Similar {
       pts.push({ name: "тип климата", w: climW * 0.2, d: a.kg && b.kg ? (a.kg === b.kg ? 0 : a.kg[0] === b.kg[0] ? 0.5 : 1) : null });
       block(pts, alpha);
     }
-    let s = 0, ws = 0, wAll = 0;
+    let s = 0, ws = 0, wAll = 0, cAll = 0, cHas = 0;
     const parts = [];
-    items.forEach(x => { wAll += x.w; if (x.d == null) return; s += x.w * x.d; ws += x.w; parts.push(x); });
-    if (!ws || ws / wAll < 0.35) return null;
+    items.forEach(x => { wAll += x.w; if (x.kind !== "c") cAll += x.w; if (x.d == null) return; s += x.w * x.d; ws += x.w; if (x.kind !== "c") cHas += x.w; parts.push(x); });
+    if (!ws || ws / wAll < 0.35 - 1e-9) return null;
+    if (a.pvec && b.pvec && cAll > 0 && cHas / cAll < 0.35) return null;
     return { d: s / ws, cov: ws / wAll, parts };
   }
 
@@ -157,7 +159,7 @@ export class Similar {
     const all = this.rankCities(x, W);
     const per = {};
     return {
-      home: this.finish(x.cc ? all.filter(o => o.city.cc === x.cc).slice(0, home) : [], x),
+      home: this.finish(x.cc && x.city ? all.filter(o => o.city.cc === x.cc).slice(0, home) : [], x),
       abroad: this.finish(all.filter(o => o.city.cc !== x.cc && (per[o.city.cc] = (per[o.city.cc] || 0) + 1) <= perCountry).slice(0, abroad), x),
     };
   }
@@ -177,7 +179,7 @@ export class Similar {
 
   predictor(rated, W) {
     if (!this.ready) this.prepare();
-    const pts = rated.map(x => ({ prof: this.profile(x), score: x.score })).filter(x => x.prof.cvec || x.prof.clim);
+    const pts = rated.map(x => ({ prof: this.profile(x), score: x.score, name: x.name })).filter(x => x.prof.cvec || x.prof.clim);
     if (pts.length < 3) return null;
     const ds = [];
     for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) { const r = this.distance(pts[i].prof, pts[j].prof, W); if (r) ds.push(r.d); }
@@ -187,9 +189,11 @@ export class Similar {
     return x => {
       const p = this.profile(x);
       let sw = 0, s = 0;
-      pts.forEach(q => { const r = this.distance(p, q.prof, W); if (!r) return; const w = Math.exp(-((r.d / h) ** 2)); sw += w; s += w * q.score; });
+      const ws = [];
+      pts.forEach(q => { const r = this.distance(p, q.prof, W); if (!r) return; const w = Math.exp(-((r.d / h) ** 2)); sw += w; s += w * q.score; if (q.name) ws.push([q.name, w]); });
       const conf = sw / (sw + k0);
-      return conf < 0.3 ? null : { score: (s + k0 * 3) / (sw + k0), conf };
+      const near = ws.sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
+      return conf < 0.3 ? null : { score: (s + k0 * 3) / (sw + k0), conf, near };
     };
   }
 }

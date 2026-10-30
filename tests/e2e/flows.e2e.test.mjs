@@ -118,7 +118,7 @@ test("an unsaved draft survives switching places and can be thrown away", { skip
   await page.tap({ sel: '[data-score="интернет"][data-v="4"]' });
   await page.goto(srv.url + "#/rate/new/porto", 400);
   assert.equal(await page.eval(`document.getElementById("fPlace").value`), "porto");
-  assert.match(await page.text(".draft-chip .linkbtn"), /Батуми \(1\)/);
+  assert.match(await page.text(".draft-chip .linkbtn"), /Батуми \(1 ответ\)/);
   await page.tap({ sel: ".chipx" });
   assert.match(await page.text(".chipx"), /Выбросить\?/);
   await page.tap({ sel: ".chipx" });
@@ -142,7 +142,7 @@ test("forgetting the key needs a second tap", { skip }, async () => {
   assert.ok(await page.eval(`localStorage.getItem("wtl:token") !== null`));
   await page.tap({ sel: "#forget" });
   assert.equal(await page.eval(`localStorage.getItem("wtl:token")`), null);
-  assert.match(await toastText(), /Ключ и кэш удалены/);
+  assert.match(await toastText(), /Ключ и данные удалены/);
 });
 
 test("saved weights become a preset for that person", { skip }, async () => {

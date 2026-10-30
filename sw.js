@@ -9,6 +9,7 @@ const SHELL = [
   "js/app.js",
   "js/calc.js",
   "js/data.js",
+  "js/facts.js",
   "js/form.js",
   "js/geo.js",
   "js/map.js",

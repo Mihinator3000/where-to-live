@@ -262,7 +262,7 @@ test("the partner's review stays hidden in the sheet until «Показать в
   await open({ local: view(41.6, 43, 6) });
   await openPin("Тбилиси");
   const t = await sheetText();
-  assert.match(t, /Вика скрыты, пока вы не оцените место сами/);
+  assert.match(t, /Оценка Вики скрыта, пока вы не оцените место сами/);
   assert.doesNotMatch(t, /Пыльно и шумно/);
   await page.tap({ text: "Показать всё равно", within: "#sheet" });
   await page.waitFor(`/Пыльно и шумно/.test(document.getElementById("sheetBody").innerText)`, 3000, "review revealed");
@@ -455,7 +455,7 @@ test("«Похожие города» in a city sheet lists cities and can colou
   await pick("Будва");
   await page.tap({ text: "Похожие города", within: "#sheet" });
   await page.waitFor(`document.querySelectorAll("#simCityBox [data-city]").length >= 5`, 5000, "similar cities");
-  assert.match(await page.text("#simCityBox"), /Похожие · веса «Оба»/i);
+  assert.match(await page.text("#simCityBox"), /Похожие · веса «Поровну»/i);
   await page.tap({ text: "Показать все на карте", within: "#sheet" });
   await page.waitFor(`/Похожие на «Будва»/.test(document.getElementById("legendBox").innerText)`, 4000, "similar legend");
   await page.waitFor(`document.getElementById("toast").hidden`, 5000, "toast gone");

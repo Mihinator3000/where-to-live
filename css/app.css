@@ -3,7 +3,7 @@
   --surface: #fdfdfd;
   --ink: #121518;
   --ink-2: #4b535b;
-  --muted: #6f7882;
+  --muted: #67707a;
   --line: #dde2e6;
   --track: #e7ebee;
   --base: #8e98a2;
@@ -73,7 +73,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .iconbtn { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; text-decoration: none; }
 .iconbtn svg { width: 20px; height: 20px; }
 .iconbtn[aria-current="page"] { background: var(--chip); color: var(--ink); }
-.sync { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; padding: 6px 8px; border-radius: 8px; max-width: 46vw; }
+.sync { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; padding: 6px 4px; border-radius: 8px; max-width: calc(100vw - 196px); }
 .sync span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--base); display: inline-block; flex: none; }
 .dot.live { background: var(--good); }
@@ -134,7 +134,7 @@ textarea { min-height: 60px; resize: vertical; }
 
 /* map */
 .map-view { position: fixed; inset: calc(var(--bar-h) + env(safe-area-inset-top, 0px)) 0 calc(var(--nav-h) + var(--safe-b)) 0; }
-#map { position: absolute; inset: 0; background: var(--mid); }
+#map { position: absolute; inset: 0; z-index: 0; background: var(--mid); }
 .map-top { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 720; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
 .map-top > * { pointer-events: auto; }
 .search { position: relative; flex: 1; max-width: 420px; }
@@ -381,10 +381,12 @@ thead th { font-weight: 500; color: var(--muted); font-size: 12px; border-bottom
 
 /* tap targets ≥ 24px, form pieces */
 summary { min-height: 28px; display: flex; align-items: center; }
-details > summary { list-style-position: inside; }
-details > summary::-webkit-details-marker { margin-right: 6px; }
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "▸"; margin-right: 6px; color: var(--muted); }
+details[open] > summary::before { content: "▾"; }
 .place-head > a { display: inline-flex; align-items: center; min-height: 32px; align-self: start; width: max-content; }
-.sim-row button, .sim-row a { min-height: 28px; display: inline-flex; align-items: center; flex-wrap: wrap; }
+.sim-row button, .sim-row a { min-height: 28px; display: inline-flex; align-items: center; flex-wrap: wrap; column-gap: .3em; }
 .ptop button { min-height: 32px; align-items: center; }
 .pick { grid-template-columns: repeat(var(--n, 9), minmax(0, 1fr)); }
 .draft-chip { display: inline-flex; align-items: center; gap: 2px; margin: 2px 6px 2px 0; }
@@ -401,3 +403,13 @@ details > summary::-webkit-details-marker { margin-right: 6px; }
 .fact > .small { grid-column: 1 / -1; }
 .fact .badge { display: inline-block; min-width: 2.4em; padding: 1px 6px; border-radius: 6px; color: var(--ink); font-family: var(--f-mono); font-size: 12px; text-align: center; }
 @media (max-width: 560px) { .fact { grid-template-columns: minmax(0, 1fr); } }
+
+@media (min-width: 860px) { .layers { right: auto; left: 160px; } }
+.map-note { position: absolute; top: 60px; left: 10px; right: 10px; z-index: 710; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; box-shadow: var(--shadow-up); }
+.chip.move { background: var(--pos); color: var(--on-strong); }
+.chip.warn { background: color-mix(in oklab, var(--warn) 35%, var(--surface)); color: var(--ink); }
+.ptop button { grid-template-columns: minmax(0, 1fr) auto; }
+.ptop button small { grid-column: 1 / -1; font-size: 11px; }
+.heat tr.pale .rowh a { color: var(--muted); }
+.heat .rowh .tag { display: block; font-size: 11px; font-weight: 400; line-height: 1.25; white-space: normal; max-width: 11em; }
+.world-row.off .v { color: var(--muted); }

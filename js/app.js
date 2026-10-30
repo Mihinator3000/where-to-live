@@ -1,13 +1,14 @@
-import { createModel, fmt, normalize, MIN_COVERAGE } from "./calc.js";
-import { Data, DEFAULT_REPO } from "./data.js";
+import { createModel, fmt, normalize, MIN_COVERAGE, gen } from "./calc.js";
+import { Data, DEFAULT_REPO, getK } from "./data.js";
 import { RateForm, datesRu } from "./form.js";
+import { factValue, factRef, factScore, parseAmount } from "./facts.js";
 import { GitHubStore } from "./store.js";
 import { MapView } from "./map.js";
 import { search, reverse } from "./geo.js";
 import { Similar, kgName } from "./similar.js";
-import { $, esc, local, toast, scoreHex, inkOn, pal, refreshPalette, uid } from "./util.js";
+import { $, esc, local, toast, scoreHex, inkOn, pal, refreshPalette, uid, plural, todayISO } from "./util.js";
 import { World, CITY_INDICATORS, MONTHS, fmtValue, toScore, CIVIDIS, haversine } from "./world.js";
-import { rankHTML, heatHTML, flagsHTML, radarSVG, tripsHTML, subtableHTML, placesListHTML, placeHref, placeScore, yearsLine, hasResidents, hiddenNote, hiddenWho, SHORT } from "./views.js";
+import { rankHTML, heatHTML, flagsHTML, radarSVG, tripsHTML, subtableHTML, placesListHTML, placeHref, placeScore, yearsLine, hasResidents, hiddenWho, hiddenNote, SHORT } from "./views.js";
 
 const TRIPS_BUDGET = 20;
 const state = {
@@ -49,23 +50,6 @@ function savedNow(r) {
   renderSync();
 }
 
-const MONEY_STEP = Math.log(1.5);
-const TDS = [[100, 3], [200, 2.5], [300, 2], [400, 1.5], [500, 1]];
-
-function factValue(p, key) { const f = p && p.facts && p.facts[key]; const v = f && Number(f.v); return v > 0 ? v : null; }
-
-function factRef(F, places) {
-  const base = places.find(p => p.status === "база");
-  return factValue(base, F.key) || F.ref || null;
-}
-
-function factScore(F, x, ref) {
-  if (x == null) return null;
-  if (F.rule === "tds") { const p = TDS; if (x <= p[0][0]) return 3; for (let i = 1; i < p.length; i++) if (x <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (x - p[i - 1][0]) / (p[i][0] - p[i - 1][0]); return 1; }
-  if (!ref) return null;
-  return Math.max(1, Math.min(5, 3 - Math.log(x / ref) / MONEY_STEP));
-}
-
 function rebuild() {
   const v = state.data.view();
   const facts = state.schema.facts || [];
@@ -86,8 +70,25 @@ function rebuild() {
   M.full = full;
   const P = M.presets;
   if (!P[state.preset] && state.preset !== "Своё") state.preset = "Оба";
-  if (state.preset !== "Своё" || !state.weights) state.weights = Object.assign({}, P[state.preset] || P["Оба"]);
+  const use = state.preset === "Своё" || presetNames(M).includes(state.preset) ? state.preset : "Поровну";
+  if (state.preset !== "Своё" || !state.weights) state.weights = Object.assign({}, P[use] || P["Поровну"]);
 }
+
+function presetNames(M) {
+  const saved = state.data.view().weights;
+  const own = M.PEOPLE.filter(w => saved[w] && Object.keys(saved[w]).length);
+  return ["Поровну"].concat(own, own.length === M.PEOPLE.length ? ["Оба"] : [], ["Своё"]);
+}
+
+const whenRu = iso => {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const t = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }), now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+  return d.toDateString() === now.toDateString() ? "сегодня в " + t : d.toDateString() === y.toDateString() ? "вчера в " + t : d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }) + " в " + t;
+};
+const dayRu = iso => { const d = new Date(String(iso).length === 10 ? iso + "T12:00:00" : iso); return isNaN(d) ? String(iso) : d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }); };
+const popRu = n => (n >= 1e6 ? `${(n / 1e6).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} млн жителей` : `${Math.round(n / 1000).toLocaleString("ru-RU")} тыс. жителей`);
+const onDevice = () => (isPhone() ? "на телефоне" : "на этом устройстве");
 
 const W = () => normalize(state.schema.groups, state.weights);
 
@@ -95,7 +96,7 @@ const W = () => normalize(state.schema.groups, state.weights);
 function renderSync() {
   const d = state.data;
   const dot = $("syncDot"), t = $("syncText");
-  const lost = d.status === "live" ? d.lost.length : 0;
+  const lost = ["live", "offline", "auth", "error", "pending"].includes(d.status) ? d.lost.length : 0;
   dot.className = "dot" + (d.status === "error" || d.status === "auth" || lost ? " err" : d.status === "live" ? " live" : d.status === "sync" || d.status === "pending" ? " sync" : "");
   const n = d.pending.length;
   const map = {
@@ -104,12 +105,12 @@ function renderSync() {
     sync: "Обновляю…",
     live: lost ? "Не отправлено: " + lost : state.lastSaved ? "Сохранено · " + state.lastSaved : "Подключено",
     pending: `В очереди: ${n}`,
-    offline: n ? `Офлайн · в очереди: ${n}` : d.loadedAt ? "Офлайн · показан кэш" : "Офлайн · данных ещё нет",
+    offline: n ? `Офлайн · в очереди: ${n}` : d.loadedAt ? "Офлайн" : "Офлайн · данных нет",
     auth: "Ключ не подходит",
     error: "Ошибка связи",
   };
   t.textContent = map[d.status] || d.status;
-  $("syncAction").textContent = d.status === "notoken" ? "Подключить данные:" : lost && state.route.name === "map" ? "Показать неотправленное:" : "Обновить данные:";
+  $("syncAction").textContent = d.status === "notoken" ? "Подключить данные:" : d.status === "auth" ? "Заменить ключ:" : lost && state.route.name === "map" ? "Показать неотправленное:" : "Обновить данные:";
   $("syncBtn").title = d.status === "notoken" ? "Подключить данные" : d.error || "Обновить данные";
 }
 
@@ -164,16 +165,23 @@ function render() {
 }
 
 /* ---------- banner ---------- */
+function brokenNote(bad) {
+  const one = path => (path.startsWith("ratings/") ? "одна оценка не учтена в итогах" : path.startsWith("places/") ? "одно место не показано" : "часть данных не учтена");
+  return `<b>Не удалось прочитать ${bad.length > 1 ? "файлы" : "файл"} ${bad.map(esc).join(", ")}:</b> в ${bad.length > 1 ? "них" : "нём"} ошибка, поэтому ${bad.length > 1 ? "часть данных не учтена" : one(bad[0])}. Остальные данные загружены. Исправьте файл в репозитории на GitHub или попросите Claude.`;
+}
+
 function bannerHTML() {
   const d = state.data;
   if (!d.hasToken) return `<div class="banner"><b>Данные не подключены.</b> Карта и мировые показатели работают, а чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</div>`;
-  if (d.status === "auth") return `<div class="banner err"><b>Ключ доступа не подходит.</b> ${d.error && !/не подходит/.test(d.error) ? esc(d.error) + ". " : ""}Проверьте его в <a href="#/settings">настройках</a>.</div>`;
-  if (d.error && d.status !== "live") return `<div class="banner err">${esc(d.error)}</div>`;
-  if (d.error) return `<div class="banner">${esc(d.error)}</div>`;
-  const lost = d.lost;
+  const n = d.pending.length, lost = d.lost, stuck = ["offline", "auth"].includes(d.status) || (d.status === "error" && !d.loadedAt);
+  const queue = tail => (n ? ` В очереди ${onDevice()}: ${n} — не потеряются и ${tail}.` : "");
   let html = "";
+  if (d.status === "auth") html += `<div class="banner err"><b>Ключ доступа не подходит.</b> ${d.error && !/не подходит/.test(d.error) ? esc(d.error) + ". " : ""}Проверьте его в <a href="#/settings">настройках</a>.${queue("отправятся, когда ключ заработает")}</div>`;
+  else if (d.status === "offline") html += `<div class="banner"><b>Нет связи.</b> ${d.loadedAt ? `Показаны данные на ${whenRu(d.loadedAt)}. ` : ""}Оценки и правки можно сохранять — они отправятся, когда появится связь.${queue("отправятся сами")}</div>`;
+  else if (d.status === "error" && d.error) html += `<div class="banner err">${esc(d.error)}.${["http", "graphql", "conflict"].includes(d.errorCode) || !d.errorCode ? ` Похоже, сбой на стороне GitHub${d.loadedAt ? ": показаны последние загруженные данные" : ""}. Нажмите на статус вверху, чтобы попробовать ещё раз, или подождите — приложение проверит само через минуту.` : ""}${queue("отправятся сами, когда GitHub ответит")}</div>`.replace("..", ".");
+  if ((d.broken || []).length) html += `<div class="banner">${brokenNote(d.broken)}</div>`;
   if (!me()) html += `<div class="banner">Кто вы на этом устройстве? <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[0])}">${esc(state.schema.people[0])}</button> <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[1])}">${esc(state.schema.people[1])}</button><br><span class="small muted">От этого зависит, чьи оценки скрыты, пока вы не оценили место сами.</span></div>`;
-  if (lost.length) html += `<div class="banner err"><b>Не отправлено: это же изменили на другом устройстве.</b> Можно записать свою версию поверх или выбросить её.${lost.map((l, i) => `<div class="lost"><span>${esc(lostLabel(l))}</span><button type="button" class="btn ghost small" data-lostapply="${i}">Записать мою</button><button type="button" class="btn ghost small" data-lostdrop="${i}">Выбросить</button></div>`).join("")}</div>`;
+  if (lost.length) html += `<div class="banner err"><b>Не отправлено: это же изменили на другом устройстве.</b> «Записать мою» — ваша версия заменит ту. «Выбросить» — останется версия с другого устройства, ваша пропадёт.${lost.map((l, i) => `<div class="lost"><span>${esc(lostLabel(l))}</span><button type="button" class="btn ghost small" data-lostapply="${i}"${stuck ? " disabled" : ""}>Записать мою</button><button type="button" class="btn ghost small" data-lostdrop="${i}"${stuck ? " disabled" : ""}>Выбросить</button></div>`).join("")}${stuck ? `<p class="small">Кнопки заработают, когда появится связь.</p>` : ""}</div>`;
   else if (d.notice) html += `<div class="banner err">${esc(d.notice)} <button type="button" class="linkbtn" data-dismiss-notice>Понятно</button></div>`;
   return html;
 }
@@ -182,8 +190,16 @@ function lostLabel(l) {
   let doc = null;
   try { doc = l.content == null ? null : JSON.parse(l.content); } catch (e) {}
   const [dir] = l.path.split("/");
-  if (dir === "places") return `Карточка «${doc ? doc.name : l.path}»${doc && doc.questions ? ": " + doc.questions.slice(0, 80) : ""}`;
-  if (dir === "ratings") return doc ? `Оценка: ${(state.M.PLACE[doc.place] || {}).name || doc.place} · ${doc.who}${doc.deleted ? " (удаление)" : ""}` : "Удаление оценки";
+  if (dir === "places") {
+    const F = state.schema.facts || [], remote = state.data.docOf(l.path);
+    const fact = k => k.startsWith("facts.") && F.find(x => x.key === k.slice(6));
+    const NAMES = { name: "Название", status: "Статус", archetype: "Архетип", reason: "Причина отсева", questions: "Вопросы" };
+    const val = (k, v) => { if (v == null || v === "") return "пусто"; const f = fact(k), n = v && typeof v === "object" ? v.v : v; return f ? (f.rule === "money" ? `${n} €` : `${n} ${f.unit}`) : `«${String(n).slice(0, 80)}»`; };
+    const items = Object.keys(l.patch || {}).map(k => { const mine = val(k, l.patch[k]), now = remote ? val(k, getK(remote, k)) : null; return `${(fact(k) || {}).name || NAMES[k] || k}: ${mine}${now && now !== mine ? ` (сейчас ${now})` : ""}`; });
+    if (l.add && l.add.questions) items.push("Вопросы: + " + String(l.add.questions).slice(0, 80));
+    return `${(doc && doc.name) || (remote && remote.name) || l.path} · ${items.length ? items.join("; ") : doc && doc.questions ? "Вопросы: " + doc.questions.slice(0, 80) : "карточка"}`;
+  }
+  if (dir === "ratings") return doc ? `Оценка: ${(state.M.PLACE[doc.place] || {}).name || doc.place} · ${doc.who}${doc.start ? " · " + datesRu(doc.start, doc.end) : ""}${doc.deleted ? " (удаление)" : ""}` : "Удаление оценки";
   if (dir === "weights") return `Веса: ${doc ? doc.who : ""}`;
   return l.path;
 }
@@ -196,12 +212,14 @@ function shares(n) {
   return floor;
 }
 
-function renderRank() {
+function renderRank(moves = {}) {
   const M = state.M;
   const saved = state.data.view().weights;
   const own = M.PEOPLE.filter(w => saved[w] && Object.keys(saved[w]).length);
-  const names = ["Поровну"].concat(own, own.length === M.PEOPLE.length ? ["Оба"] : [], ["Своё"]);
+  const names = presetNames(M);
   const cur = names.includes(state.preset) ? state.preset : "Поровну";
+  const d = state.data, waiting = d.hasToken && !d.loadedAt;
+  const saveLabel = (cur, who) => cur === who ? "Это ваши сохранённые веса" : M.PEOPLE.includes(cur) ? `Сохранить веса «${cur}» как мои (${who})` : `Сохранить как мои веса (${who})`;
   if (cur !== state.preset) state.weights = Object.assign({}, M.presets["Поровну"]);
   const norm = W(), sh = shares(norm);
   const trips = tripCount();
@@ -209,42 +227,64 @@ function renderRank() {
   const el = $("v-rank");
   el.innerHTML = `
     <header class="stack" style="gap:8px"><h1>Рейтинг</h1>
-      <p class="muted small">Мест: ${M.places.filter(p => !M.isBase(p)).length} · оценок: ${M.full.ratings.length} · поездок-разведок: ${trips} из ${TRIPS_BUDGET}</p>
+      <p class="muted small">Мест: ${M.places.filter(p => !M.isBase(p)).length} · оценок: ${M.full.ratings.length} · <span title="Всего запланировали ${TRIPS_BUDGET} поездок-разведок">поездок-разведок: ${trips <= TRIPS_BUDGET ? `${trips} из ${TRIPS_BUDGET}` : `${trips}, план был ${TRIPS_BUDGET}`}</span></p>
     </header>
     ${bannerHTML()}
     <section class="block">
       <div class="sec-head"><h2>Места</h2><div class="seg" role="group" aria-label="Чьи веса" id="presets">${names.map(n => `<button type="button" aria-pressed="${n === cur}" data-p="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
-      <p class="small muted">3 — как в СПб, правее — лучше. Точки: <i class="sw m"></i> ${esc(M.PEOPLE[0])}, <i class="sw v"></i> ${esc(M.PEOPLE[1])}. Кнопки выше — чьи веса групп учитывать.</p>
+      <p class="small muted">Полоса — итог места: наши оценки вместе с мировыми данными и цифрами места; 3 — как в СПб, правее — лучше. Точки — оценки каждого из нас без данных: <i class="sw m"></i> ${esc(M.PEOPLE[0])}, <i class="sw v"></i> ${esc(M.PEOPLE[1])}. Кнопки выше — чьи веса групп учитывать.</p>
       <div class="panel">
         <details class="weights" id="wdetails"${local.get("wopen", false) ? " open" : ""}>
           <summary id="wsum">Веса групп: «${esc(cur)}»${!own.length ? " · своих весов ещё никто не сохранил" : ""}</summary>
+          <p class="small muted">«Поровну» — все группы весят одинаково. ${M.PEOPLE.map(w => `«${esc(w)}» — сохранённые веса ${esc(gen(w))}`).join(", ")}. «Оба» — среднее наших сохранённых весов. «Своё» — ползунки, которые вы двигаете сами.</p>
           <p class="small muted">Раздайте 100 очков между группами: чем важнее для вас разница между местами в группе, тем больше очков. Двигаете одну — остальные подстраиваются, сумма остаётся 100.</p>
           <div class="wgrid" id="wgrid">${M.GROUPS.map(g => `<label class="wrow" for="w-${g.key}"><span>${esc(g.name)}</span><span class="num muted">${sh[g.key]}</span><input type="range" id="w-${g.key}" data-g="${g.key}" min="0" max="100" step="1" value="${sh[g.key]}"></label>`).join("")}</div>
-          ${canWrite() ? (who ? `<div class="wsave"><button type="button" class="btn ghost small" id="wsaveBtn">Сохранить как мои веса (${esc(who)})</button></div>` : `<p class="small muted">Чтобы сохранить веса как свои, выберите в <a href="#/settings">настройках</a>, кто вы.</p>`) : ""}
+          ${canWrite() ? (who ? `<div class="wsave"><button type="button" class="btn ghost small" id="wsaveBtn"${cur === who ? " disabled" : ""}>${esc(saveLabel(cur, who))}</button></div>` : `<p class="small muted">Чтобы сохранить веса как свои, выберите в <a href="#/settings">настройках</a>, кто вы.</p>`) : ""}
         </details>
-        <div class="rank" id="rank">${rankHTML(M, norm)}</div>
+        <div class="rank" id="rank">${waiting ? `<p class="pad small muted">${esc(emptyNote())}</p>` : rankHTML(M, norm, moves)}</div>
       </div>
-      <details class="small muted rank-help"><summary>Что значат пометки</summary><p>«№1–3 в зависимости от весов» — место может сдвинуться, если поменять любой вес на ±20% или взять веса одного из нас. «Заполнено» — по какой доле групп вообще есть оценки или данные (показываем, только если меньше 70%). «Год здесь» — «прожили бы здесь год?», 0–10. В основной список место попадает, когда отвечено хотя бы на половину главных вопросов ★; остальные ниже, их итог держится в основном на мировых данных.${useData() ? "" : " Мировые данные сейчас выключены в настройках."}</p></details>
+      <details class="small muted rank-help"><summary>Что значат пометки</summary><p>«База» — СПб, точка отсчёта: все оценки — относительно него, у него всегда 3. «Мировые данные» — показатели стран (цены, медпомощь, безопасность, свободы) и климат городов; их можно выключить в настройках. «№1–3 в зависимости от весов» — место может сдвинуться, если поменять любой вес на ±20% или взять веса одного из нас. «Заполнено» — по какой доле групп вообще есть оценки или данные (показываем, только если меньше 70%). «Год здесь» — «прожили бы здесь год?», 0–10. В основной список место попадает, когда отвечено хотя бы на половину главных вопросов ★; остальные ниже, их итог держится в основном на мировых данных. Оценка партнёра скрыта, пока вы не оцените место сами; открыть её можно в досье места кнопкой «Показать всё равно». «Отсев» — места, от которых отказались или где у кого-то вето: в рейтинг не входят. «Из ${TRIPS_BUDGET}» — сколько поездок-разведок мы запланировали всего.${useData() ? "" : " Мировые данные сейчас выключены в настройках."}</p></details>
     </section>
     <section class="block">
       <div class="sec-head"><h2>Места × группы</h2><div class="scale-key"><span>хуже СПб</span><i style="background: var(--neg)"></i><i style="background: color-mix(in oklab, var(--neg) 45%, var(--mid))"></i><i style="background: var(--mid)"></i><i style="background: color-mix(in oklab, var(--pos) 45%, var(--mid))"></i><i style="background: var(--pos)"></i><span>лучше</span></div></div>
-      <div class="panel scroll">${M.places.length ? `<table class="heat" id="heat">${heatHTML(M, norm)}</table>` : `<p class="pad small muted">Сравнивать пока нечего: добавьте место через поиск на <a href="#/map">карте</a>.</p>`}</div>
+      ${M.places.length ? `<p class="small muted">Каждая клетка — оценка группы 1–5, где 3 — как в СПб. Строки — места в порядке рейтинга. Серая подпись под названием — почему клетки места держатся в основном на мировых данных: своих оценок мало или оценка партнёра скрыта, пока вы не оцените место сами. «—» — по группе нет оценок и нет данных.</p>` : ""}
+      <div class="panel scroll">${M.places.length ? `<table class="heat" id="heat">${heatHTML(M, norm)}</table>` : `<p class="pad small muted">${!d.hasToken ? `Сравнивать пока нечего: места появятся после подключения данных в <a href="#/settings">настройках</a>.` : waiting ? esc(emptyNote()) : `Сравнивать пока нечего: добавьте место через поиск на <a href="#/map">карте</a>.`}</p>`}</div>
     </section>
     <section class="block">
-      ${(() => { const f = flagsHTML(M); return `<div class="sec-head"><h2>Флаги</h2><span class="small muted">${f.count ? f.count : ""}</span></div><div class="panel"><div class="flags">${f.html}</div></div>`; })()}
+      ${(() => { const f = flagsHTML(M); return `<div class="sec-head"><h2>Флаги</h2><span class="small muted">${f.count ? `${f.count} ${plural(f.count, "флаг", "флага", "флагов")}` : ""}</span></div><div class="panel"><div class="flags">${waiting ? `<p class="small muted">Флаги появятся, когда загрузятся данные.</p>` : f.html}</div></div>`; })()}
     </section>`;
   $("wdetails").addEventListener("toggle", e => local.set("wopen", e.target.open));
+  const movesSince = before => {
+    const after = state.M.ranksFor(W()), moves = {};
+    Object.keys(after).forEach(id => { if (before[id] && before[id] !== after[id]) moves[id] = before[id] - after[id]; });
+    return moves;
+  };
+  const risen = moves => Object.keys(moves).filter(id => moves[id] > 0).map(id => state.M.PLACE[id].name);
+  let dragBefore = null;
   $("presets").addEventListener("click", e => {
     const b = e.target.closest("button[data-p]");
     if (!b) return;
+    const before = state.M.ranksFor(W());
     state.preset = b.dataset.p;
     state.weights = Object.assign({}, b.dataset.p === "Своё" ? local.get("customWeights", null) || W() : state.M.presets[state.preset]);
     local.set("preset", state.preset); local.set("weights", state.weights);
-    rerender(renderRank);
+    const moves = movesSince(before);
+    rerender(() => renderRank(moves));
+    const up = risen(moves);
+    if (up.length) toast(`С весами «${state.preset}» поднялись: ${up.join(", ")}`);
+  });
+  $("wgrid").addEventListener("change", () => {
+    if (!dragBefore) return;
+    const moves = movesSince(dragBefore);
+    dragBefore = null;
+    $("rank").innerHTML = rankHTML(state.M, W(), moves);
+    const up = risen(moves);
+    if (up.length) toast(`С вашими весами поднялись: ${up.join(", ")}`);
   });
   $("wgrid").addEventListener("input", e => {
     const inp = e.target.closest("input[data-g]");
     if (!inp) return;
+    dragBefore ||= state.M.ranksFor(W());
     const keys = state.M.GROUPS.map(g => g.key), cur = W(), k = inp.dataset.g, v = Number(inp.value);
     const others = keys.filter(x => x !== k), rest = others.reduce((a, x) => a + cur[x], 0);
     const next = { [k]: v };
@@ -262,6 +302,8 @@ function renderRank() {
       if (r !== inp) r.value = sh2[g];
     });
     $("wsum").textContent = "Веса групп: «Своё»";
+    const sb = $("wsaveBtn");
+    if (sb) { sb.disabled = false; sb.textContent = saveLabel("Своё", who); }
     $("presets").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.p === "Своё")));
   });
   $("wsaveBtn")?.addEventListener("click", async e => {
@@ -289,8 +331,8 @@ function tripCount() {
 /* ---------- places ---------- */
 function renderPlaces() {
   const el = $("v-places");
-  el.innerHTML = `<header class="stack" style="gap:8px"><h1>Места</h1><p class="small muted">Где были и куда смотрим. Новое место — через поиск на <a href="#/map">карте</a>.</p></header>
-    ${bannerHTML()}
+  el.innerHTML = `<header class="stack" style="gap:8px"><h1>Места</h1><p class="small muted">Где были и куда смотрим. Число справа — итог из 5, где 3 — как в СПб. Новое место — через поиск на <a href="#/map">карте</a>.</p><p class="small muted">Статусы: кандидат — смотрим и ездим на разведку, финалист — главный претендент, отсев — отказались, причина в карточке места.</p></header>
+    ${state.data.hasToken ? bannerHTML() : ""}
     <input type="search" id="placeFilter" placeholder="Фильтр по названию или стране" value="${esc(state.placeFilter)}" aria-label="Фильтр мест">
     <div class="panel plist" id="plist">${placesListHTML(state.M, W(), state.placeFilter, emptyNote())}</div>`;
   $("placeFilter").addEventListener("input", e => { state.placeFilter = e.target.value; $("plist").innerHTML = placesListHTML(state.M, W(), state.placeFilter, emptyNote()); });
@@ -300,27 +342,32 @@ function emptyNote() {
   const d = state.data;
   if (!d.hasToken) return false;
   if (d.loadedAt) return true;
-  return d.status === "sync" || d.status === "idle" ? "Загружаю данные…" : "Места ещё не загружены: нет связи или ключ не подходит. Появятся, когда данные загрузятся.";
+  return d.status === "sync" || d.status === "idle" ? "Загружаю данные…" : d.status === "offline" ? "Нет связи: места загрузятся, когда появится интернет." : d.status === "auth" ? "Места не загружены: ключ не подходит. Проверьте его в настройках." : "Места ещё не загружены: GitHub не ответил. Появятся, когда данные загрузятся.";
 }
 
 /* ---------- place dossier ---------- */
 function placeCity(p) { return state.world.cities ? state.world.placeCity(p) : null; }
 
-function worldRowsHTML(cc, city, first) {
-  const Wd = state.world;
-  let html = `<p class="small muted">Плашка справа — оценка 1–5 для итога: 3 — как в России и СПб, 4–5 — лучше для нас. Строки без плашки — справка, в итог не входят.</p>`;
-  const rows = [];
+const VISA = { "visa free": "без визы", "visa on arrival": "виза по прилёте", "e-visa": "нужна электронная виза", "visa required": "нужна виза", eta: "нужно электронное разрешение (ETA)", home: "своя страна" };
+
+function worldRowsHTML(cc, city, first, place) {
+  const Wd = state.world, M = state.M;
+  let html = `<p class="small muted">Плашка справа — оценка 1–5 для итога, 4–5 — лучше для нас. Обычно 3 — как в России и СПб; у строк с пометкой «абсолютная шкала» 3 — фиксированный порог, а не Россия. Строки без плашки — справка, в итог не входят.</p>`;
+  const rows = [], facts = state.schema.facts || [];
+  const over = cats => place && (cats || []).map(c => facts.find(F => F.cat === c && factScore(F, factValue(place, F.key), factRef(F, M.places)) != null)).find(Boolean);
   if (cc) Wd.indicators.forEach(ind => {
     const r = Wd.raw(cc, ind.key);
     if (!r) return;
-    rows.push({ ind, v: r[0], year: r[1], s: (ind.cats || []).length ? Wd.countryScore(cc, ind.key) : null, level: "страна" });
+    const mode = ind.key === "ru_visa" && r[2] ? VISA[r[2]] || r[2] : "";
+    rows.push({ ind, v: r[0], year: r[1], s: (ind.cats || []).length ? Wd.countryScore(cc, ind.key) : null, level: "страна", text: mode ? (r[0] > 0 && !/^нужна|своя/.test(mode) ? `${r[0]} дн., ${mode}` : mode) : "", fact: over(ind.cats) });
   });
   if (city) CITY_INDICATORS.forEach(ind => {
     const v = Wd.cityValue(city, ind.key);
     if (v == null) return;
-    rows.push({ ind, v, s: (ind.cats || []).length ? Wd.cityScore(city, ind.key) : null, level: city.synthetic ? "точка" : "город" });
+    rows.push({ ind, v, s: (ind.cats || []).length ? Wd.cityScore(city, ind.key) : null, level: city.synthetic ? "точка" : "город", fact: over(ind.cats) });
   });
-  const row = r => `<div class="world-row"><span>${esc(r.ind.name)}<small>${esc(r.level)}${r.year ? " · " + r.year : ""}${r.ind.source ? " · " + esc(r.ind.source) : ""}${r.ind.note ? " · " + esc(r.ind.note) : ""}</small></span><span class="v">${esc(fmtValue(r.ind, r.v))}</span><span class="s" style="background:${r.s == null ? "transparent" : scoreHex(r.s)};color:${r.s == null ? "var(--ink)" : inkOn(scoreHex(r.s))}" title="Шкала 1–5, Россия/СПб = 3">${r.s == null ? "" : fmt(r.s)}</span></div>`;
+  const abs = r => r.s != null && r.ind.scale && r.ind.scale.type === "abs";
+  const row = r => `<div class="world-row${r.fact ? " off" : ""}"><span>${esc(r.ind.name)}<small>${esc(r.level)}${r.year ? " · " + r.year : ""}${abs(r) ? " · абсолютная шкала" : ""}${r.ind.source ? " · " + esc(r.ind.source) : ""}${r.ind.note ? " · " + esc(r.ind.note) : ""}${r.fact ? ` · в итог не входит: вместо него «${esc(r.fact.name)}» из «Цифр места»` : ""}</small></span><span class="v">${esc(r.text || fmtValue(r.ind, r.v))}</span><span class="s" style="background:${r.s == null ? "transparent" : scoreHex(r.s)};color:${r.s == null ? "var(--ink)" : inkOn(scoreHex(r.s))}${r.fact ? ";opacity:.45" : ""}" title="${r.fact ? "Не входит в итог: вместо него цифры места" : abs(r) ? "Шкала 1–5 с фиксированными порогами" : "Шкала 1–5, Россия/СПб = 3"}">${r.s == null ? "" : fmt(r.s)}</span></div>`;
   if (!rows.length) return `<p class="small muted">Мировых данных по этому месту нет.</p>`;
   const top = first && rows.find(r => r.ind.key === first);
   if (top) html += `<div class="small muted wgh">Показатель на карте</div>` + row(top);
@@ -342,11 +389,12 @@ function climateSVG(city, ref) {
   const y = t => padT + (tmax - t) / (tmax - tmin) * (H - padT - padB);
   let g = "";
   for (let t = tmin; t <= tmax; t += 10) g += `<line x1="${padL}" x2="${Wd}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)"/><text x="2" y="${y(t) + 3}">${t}°</text>`;
-  if (Array.isArray(city.p)) city.p.forEach((p, i) => { if (p == null) return; const h = p / pmax * (H - padT - padB) * 0.6; g += `<rect x="${x(i) - 7}" y="${H - padB - h}" width="14" height="${h}" fill="var(--pos)" opacity="0.25"><title>${MONTHS[i]}: ${p} мм</title></rect>`; });
+  const tip = i => `${MONTHS[i]}: ${city.t[i] == null ? "—" : city.t[i] + " °C"}${city.p && city.p[i] != null ? ", осадки " + city.p[i] + " мм" : ""}`;
+  if (Array.isArray(city.p)) city.p.forEach((p, i) => { if (p == null) return; const h = p / pmax * (H - padT - padB) * 0.6; g += `<rect x="${x(i) - 7}" y="${H - padB - h}" width="14" height="${h}" fill="var(--pos)" opacity="0.25" data-tip="${tip(i)}"></rect>`; });
   const line = (arr, color, dash) => `<polyline fill="none" stroke="${color}" stroke-width="2" ${dash ? `stroke-dasharray="${dash}"` : ""} points="${arr.map((t, i) => t == null ? "" : `${x(i).toFixed(1)},${y(t).toFixed(1)}`).join(" ")}"/>`;
-  if (ref && Array.isArray(ref.t) && ref !== city) g += line(ref.t, "var(--base)", "4 3");
+  if (ref && Array.isArray(ref.t) && ref !== city) g += line(ref.t, "var(--muted)", "4 3");
   g += line(city.t, "var(--v)");
-  city.t.forEach((t, i) => { if (t != null) g += `<circle cx="${x(i)}" cy="${y(t)}" r="6" fill="transparent" data-tip="${MONTHS[i]}: ${t} °C${city.p ? ", осадки " + city.p[i] + " мм" : ""}"/>`; });
+  city.t.forEach((t, i) => { const w = (Wd - padL) / 12; g += `<rect x="${(x(i) - w / 2).toFixed(1)}" y="${padT}" width="${w.toFixed(1)}" height="${H - padT - padB}" fill="transparent" data-tip="${tip(i)}"/>`; if (t != null) g += `<circle cx="${x(i)}" cy="${y(t)}" r="6" fill="transparent" data-tip="${tip(i)}"/>`; });
   MONTHS.forEach((m, i) => { g += `<text x="${x(i)}" y="${H - 4}" text-anchor="middle">${m}</text>`; });
   return `<svg viewBox="0 0 ${Wd} ${H}" role="img" aria-label="Климат по месяцам">${g}</svg>`;
 }
@@ -372,7 +420,7 @@ function similarCountriesHTML(list) {
 }
 
 function externalLinks(p, city) {
-  const en = (city && city.en) || p.name;
+  const en = String((city && city.en) || p.name || "");
   const ascii = en.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
   const country = state.world.enNameOf(p.cc || (city && city.cc));
   const link = (href, label) => `<a class="btn ghost small" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
@@ -397,7 +445,22 @@ function renderPlace(id) {
   const ref = state.world.spbCity;
   const onlyData = !M.isBase(p) && !M.ratingsOf(p.id).length && t.score != null;
   const statuses = state.schema.statuses;
-  const parts = M.isBase(p) ? [] : M.PEOPLE.filter(w => !M.hidden(p.id, w)).map(w => [w, M.total(p, norm, w).score]).concat([["живущие", M.total(p, norm, "res").score], ["мировые данные", M.total(p, norm, "data").score]]).filter(x => x[1] != null);
+  const typed = {};
+  if (!M.isBase(p)) (state.schema.facts || []).forEach(F => { const v = factValue(p, F.key), ref = factRef(F, M.places); if (v != null && factScore(F, v, ref) != null) typed[F.cat] = `Из «Цифр места»: ${F.rule === "money" ? "€" + v : v + " " + F.unit}${F.rule === "money" && ref ? `, в СПб €${ref}` : ""}`; });
+  const hasFacts = Object.keys(typed).length > 0;
+  const parts = M.isBase(p) ? [] : M.PEOPLE.filter(w => !M.hidden(p.id, w)).map(w => [w, M.total(p, norm, w).score]).concat([["живущие", M.total(p, norm, "res").score], [hasFacts ? "мировые данные и цифры места" : "мировые данные", M.total(p, norm, "data").score]]).filter(x => x[1] != null);
+  const mine = parts.filter(x => M.PEOPLE.includes(x[0])).map(x => x[1]);
+  const extra = [parts.some(x => x[0].startsWith("мировые")) ? "мировые данные" : "", parts.some(x => x[0] === "живущие") ? "слова живущих" : ""].filter(Boolean);
+  const lower = mine.length && extra.length && t.score != null && Math.round(Math.min(...mine) * 10) - Math.round(t.score * 10) >= 2;
+  const vetoR = !M.isBase(p) && M.vetoes().find(r => r.place === p.id);
+  const out = M.isBase(p) ? "" : p.status === "отсев" ? "отсев" : vetoR ? "вето" : "";
+  const rr = (M.rankRange(norm) || {})[p.id], rankText = ranks[p.id] ? `№${ranks[p.id]} в рейтинге${rr && rr.min !== rr.max ? `, №${rr.min}–${rr.max} в зависимости от весов` : ""}` : "";
+  const hidW = M.isBase(p) ? [] : hiddenWho(M, p.id);
+  const gs = M.isBase(p) || t.score == null ? [] : M.GROUPS.map(g => [g.name.toLowerCase(), M.groupScore(p, g.key, "final")]).filter(x => x[1] != null);
+  const byScore = gs.slice().sort((a, b) => b[1] - a[1]), top = byScore[0], low = byScore[byScore.length - 1];
+  const best = byScore.filter(x => x[1] >= 3.25).slice(0, 3).map(x => x[0]), worst = byScore.filter(x => x[1] <= 2.75).reverse().slice(0, 3).map(x => x[0]);
+  const sides = gs.length < 2 ? "" : `${best.length ? `<b>Лучше СПб:</b> ${esc(best.join(", "))}.` : `<b>Сильнее всего:</b> ${esc(top[0])} (${fmt(top[1])}).`} ${worst.length ? `<b>Хуже СПб:</b> ${esc(worst.join(", "))}.` : `<b>Слабее всего:</b> ${esc(low[0])} (${fmt(low[1])}).`}`;
+  const scoreTail = M.isBase(p) ? "база по определению" : t.score == null ? (hidW.length ? `Итога пока нет: ${hiddenNote(M, p.id)}, а мировых данных по месту нет.` : "Итога пока нет: нет ни наших оценок, ни мировых данных по этому месту.") : `из 5, где 3 — как в СПб · заполнено ${Math.round(t.coverage * 100)}%${out ? ` · в рейтинг не входит: ${out}` : rankText ? " · " + rankText : t.coverage < MIN_COVERAGE ? " · мало оценок для рейтинга" : !M.ownEnough(p.id) && !onlyData ? ` · своих ответов на ★: ${Math.round(M.ownShare(p.id) * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length}, пока не в рейтинге` : ""}`;
   el.innerHTML = `
     ${bannerHTML()}
     <header class="place-head">
@@ -405,34 +468,37 @@ function renderPlace(id) {
       <h1>${esc(p.name)}</h1>
       <div class="line">
         ${p.country ? `<span class="chip">${esc(p.country)}</span>` : ""}
-        <span class="chip${M.isBase(p) ? " solid" : ""}">${esc(p.status || "кандидат")}</span>
+        <span class="chip${M.isBase(p) ? " solid" : ""}">${esc(p.status || "кандидат")}</span>${vetoR ? `<span class="chip warn">вето</span>` : ""}
         ${p.archetype ? `<span class="chip">${esc(p.archetype)}</span>` : ""}
         ${p.lat != null ? `<a class="btn ghost small" href="#/map" data-focus="${esc(p.id)}">На карте</a>` : ""}
         ${!M.isBase(p) ? `<a class="btn small" href="#/rate/new/${encodeURIComponent(p.id)}">Оценить</a>` : ""}
       </div>
     </header>
     <div class="panel pad stack" style="gap:8px">
-      <div class="bigscore"><b>${M.isBase(p) ? "3.0" : fmt(t.score)}</b><span class="muted">${M.isBase(p) ? "база по определению" : `из 5, где 3 — как в СПб · заполнено ${Math.round(t.coverage * 100)}%${ranks[p.id] ? ` · №${ranks[p.id]} в рейтинге` : t.score != null && t.coverage < MIN_COVERAGE ? " · мало оценок для рейтинга" : t.score != null && !M.ownEnough(p.id) && !onlyData ? ` · своих ответов на ★: ${Math.round(M.ownShare(p.id) * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length}, пока не в рейтинге` : ""}`}</span></div>
-      ${onlyData ? `<p class="small muted">${hiddenNote(M, p.id) ? "Ваших оценок нет, " + esc(hiddenNote(M, p.id)) + ": итог пока по мировым данным." : "Мы здесь ещё не были: итог посчитан только по мировым данным."}</p>` : parts.length > 1 ? `<p class="small muted">Из чего итог: ${parts.map(([w, v]) => `${esc(w)} ${fmt(v)}`).join(" · ")}</p>` : ""}
+      <div class="bigscore"><b>${M.isBase(p) ? "3.0" : fmt(t.score)}</b><span class="muted">${scoreTail}</span></div>
+      ${vetoR ? `<p class="small"><b>Не в рейтинге: вето ${esc(gen(vetoR.who))}</b> — ${esc(vetoR.veto)}</p>` : ""}
+      ${hidW.length ? `<p class="small muted">${hidW.length > 1 ? "Оценки" : "Оценка"} ${esc(hidW.map(gen).join(" и "))} ${hidW.length > 1 ? "скрыты" : "скрыта"}, пока вы не оцените место сами. <button type="button" class="linkbtn" data-reveal="${esc(p.id)}">Показать всё равно</button></p>` : ""}
+      ${onlyData ? `<p class="small muted">${hidW.length ? "Ваших оценок нет: итог пока по мировым данным." : `Мы здесь ещё не были: итог посчитан только по ${hasFacts ? "мировым данным и цифрам места" : "мировым данным"}.`}</p>` : parts.length > 1 ? `<p class="small muted">Из чего итог: ${parts.map(([w, v]) => `${esc(w)} ${fmt(v)}`).join(" · ")}${lower ? `. Итог ниже наших оценок, потому что в нём учтены ещё ${extra.join(" и ")}: где туристу плохо видно, они весят больше.` : ""}</p>` : ""}
+      ${sides ? `<p class="small">${sides}</p>` : ""}
       ${p.questions ? `<div class="small"><b>Вопросы к следующей поездке:</b> ${esc(p.questions)}</div>` : ""}
       ${p.status === "отсев" && p.reason ? `<div class="small"><b>Причина отсева:</b> ${esc(p.reason)}</div>` : ""}
     </div>
-    <div class="panel"><div class="dossier"><div class="radar">${radarSVG(M, p)}<div class="legend small"><span><i class="sw m"></i>${esc(M.PEOPLE[0])}</span><span><i class="sw v"></i>${esc(M.PEOPLE[1])}</span>${hasResidents(M) ? `<span><i class="sw res"></i>Живущие</span>` : ""}<span><i class="sw data"></i>Данные</span><span><i class="sw base"></i>СПб = 3</span></div></div><div class="trips">${tripsHTML(M, p, canWrite(), me())}</div></div></div>
+    <div class="panel"><div class="dossier"><div class="radar">${radarSVG(M, p)}<div class="legend small"><span><i class="sw m"></i>${esc(M.PEOPLE[0])}</span><span><i class="sw v"></i>${esc(M.PEOPLE[1])}</span>${hasResidents(M) ? `<span><i class="sw res"></i>Живущие</span>` : ""}<span><i class="sw data"></i>Данные</span><span><i class="sw base"></i>СПб = 3</span><span class="muted">ближе к краю — лучше, пунктирное кольцо — СПб = 3</span></div></div><div class="trips">${tripsHTML(M, p, canWrite(), me(), new Set(state.data.pending.filter(c => c.path.startsWith("ratings/")).map(c => c.path.slice(8, -5))))}</div></div></div>
     <section class="block">
       <div class="sec-head"><h2>Подкатегории</h2><label class="toggle"><input type="checkbox" id="showEmpty"${state.showEmpty ? " checked" : ""}> Показать пустые</label></div>
-      <div class="panel scroll"><table class="subtable">${subtableHTML(M, p, state.showEmpty)}</table></div>
+      <div class="panel scroll"><table class="subtable">${subtableHTML(M, p, state.showEmpty, typed)}</table></div>
       <p class="small muted">«Итог» сводит наши оценки с данными: чем хуже туристу видно подкатегорию, тем больше вес данных. Буква у балла — откуда знаем: A — в быту, C — со слов живущих, D — по сайтам.</p>
     </section>
     <section class="block">
       <div class="sec-head"><h2>Мировые данные</h2><span class="small muted">${city && !city.synthetic ? "климат: " + esc(city.n) + (p.lat != null ? ", " + Math.round(haversine(p, city)) + " км" : "") + " · " + esc(kgName(city.kg)) : ""}</span></div>
       <div class="panel pad stack">
         ${city && Array.isArray(city.t) ? `<div class="clim">${climateSVG(city, ref)}</div>${climLegend(p.name, ref && ref !== city)}` : ""}
-        <div class="world">${worldRowsHTML(p.cc, city)}</div>
+        <div class="world">${worldRowsHTML(p.cc, city, null, M.isBase(p) ? null : p)}</div>
         ${externalLinks(p, city)}
       </div>
     </section>
     <section class="block">
-      <div class="sec-head"><h2>Похожие места</h2><span class="small muted">по весам «${esc(state.preset)}»</span></div>
+      <div class="sec-head"><h2>Похожие места</h2><span class="small muted">по весам «${esc(presetNames(M).includes(state.preset) ? state.preset : "Поровну")}» из «Рейтинга»</span></div>
       <div class="panel pad" id="simBox"><p class="small muted">Считаю…</p></div>
     </section>
     <section class="block">
@@ -446,7 +512,7 @@ function renderPlace(id) {
       <form class="panel pad stack" id="placeForm">
         <div class="frow">
           <label class="field"><span class="lbl">Название</span><input type="text" name="name" value="${esc(p.name)}" ${canWrite() ? "" : "disabled"}></label>
-          ${M.isBase(p) ? "" : `<label class="field"><span class="lbl">Статус</span><select name="status" ${canWrite() ? "" : "disabled"}>${statuses.filter(s => s !== "база").map(s => `<option${s === p.status ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`}
+          ${M.isBase(p) ? "" : `<label class="field"><span class="lbl">Статус</span><select name="status" ${canWrite() ? "" : "disabled"}>${(p.status && !statuses.includes(p.status) ? [p.status] : []).concat(statuses.filter(s => s !== "база")).map(s => `<option${s === (p.status || "кандидат") ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`}
           <label class="field"><span class="lbl">Архетип</span><input type="text" name="archetype" list="archetypes" value="${esc(p.archetype || "")}" placeholder="курорт, город у моря, мегаполис, горы" ${canWrite() ? "" : "disabled"}><datalist id="archetypes">${ARCHETYPES.map(a => `<option value="${esc(a)}">`).join("")}</datalist></label>
         </div>
         <label class="field" id="reasonBox"${p.status === "отсев" ? "" : " hidden"}><span class="lbl">Причина отсева</span><input type="text" name="reason" value="${esc(p.reason || "")}" ${canWrite() ? "" : "disabled"}></label>
@@ -454,17 +520,35 @@ function renderPlace(id) {
         ${canWrite() ? `<div class="btns"><button type="submit" class="btn">Сохранить карточку</button><span class="msg" id="placeMsg" role="status"></span></div>` : ""}
       </form>
     </section>`;
-  const dirtyForms = new Set();
+  const dirtyForms = new Set(), renderDoc = state.data.docOf(`places/${p.id}.json`) || p, bases = {};
+  const F_ALL = state.schema.facts || [];
+  const fieldName = k => k.startsWith("facts.") ? ((F_ALL.find(f => f.key === k.slice(6)) || {}).name || k) : ({ name: "Название", status: "Статус", archetype: "Архетип", reason: "Причина отсева", questions: "Вопросы" })[k] || k;
+  const fieldVal = (k, v) => { if (v == null || v === "") return "пусто"; const f = k.startsWith("facts.") && F_ALL.find(x => x.key === k.slice(6)), n = v && typeof v === "object" ? v.v : v; return f ? (f.rule === "money" ? `${n} €` : `${n} ${f.unit}`) : `«${String(n).slice(0, 60)}»`; };
   const savePlaceDoc = async (formId, patch, msgId, okText) => {
-    const msg = $(msgId);
+    const btn = $(formId).querySelector("[type=submit]"), label = btn.textContent;
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = "Сохраняю…";
+    const base = Object.fromEntries(Object.keys(patch).map(k => [k, k in bases ? bases[k] : getK(renderDoc, k)]));
+    const say = (text, err) => { const m = $(msgId); if (m) { m.textContent = text; m.className = err ? "msg err" : "msg"; } };
     try {
-      const { r } = await state.data.savePlace(patch(state.M.PLACE[p.id] || p), false, state.data.oidOf("places", p.id));
+      const { r, doc } = await state.data.updatePlace(p.id, patch, { base });
       savedNow(r);
       dirtyForms.delete(formId);
+      Object.keys(patch).forEach(k => { if (r === "sent" && doc) bases[k] = getK(doc, k); else delete bases[k]; });
       state.dirty = dirtyForms.size > 0;
-      toast(r === "queued" ? "Нет связи: отправится позже" : okText);
-      if (state.dirty) { msg.textContent = okText; msg.className = "msg"; } else render();
-    } catch (err) { msg.textContent = err.code === "clash" ? "Карточку только что изменили на другом устройстве. Нажмите «Сохранить» ещё раз: ваши поля запишутся поверх." : err.message; msg.className = "msg err"; }
+      const st = state.data.status;
+      const text = r !== "queued" ? okText : st === "auth" ? `Ключ не подходит: правка ждёт ${onDevice()} и отправится, когда ключ заработает` : st === "error" ? `GitHub не отвечает: правка ждёт ${onDevice()} и отправится сама` : "Нет связи: отправится позже";
+      toast(text);
+      if (!state.dirty && state.route.name === "place" && state.route.arg === p.id) render();
+      say(text);
+    } catch (err) {
+      const what = formId === "factsForm" ? "Цифры" : "Карточку";
+      if (err.code === "clash") {
+        (err.theirs || []).forEach(([k, v]) => { bases[k] = v; });
+        const there = (err.theirs || []).map(([k, v]) => `${fieldName(k)} — ${fieldVal(k, v)}`).join("; ");
+        say(`${what} только что изменили на другом устройстве${there ? ` (там: ${there})` : ""}. Нажмите «${label}» ещё раз — запишется ваше.`, true);
+      } else say(err.message, true);
+    } finally { if (btn.isConnected) { btn.disabled = false; btn.textContent = label; } }
   };
   [$("placeForm"), $("factsForm")].forEach(f => f.addEventListener("input", () => { dirtyForms.add(f.id); state.dirty = true; }));
   $("placeForm").querySelector('[name="status"]')?.addEventListener("change", e => { $("reasonBox").hidden = e.target.value !== "отсев"; });
@@ -480,20 +564,16 @@ function renderPlace(id) {
       const v = parseAmount(cur.raw);
       if (!(v > 0)) { bad.push(F.name); return; }
       if (F.rule === "money" && v < 5) { typo.push(`${F.name}: ${cur.raw}`); return; }
-      edits[F.key] = { v, src: cur.src, at: new Date().toISOString().slice(0, 10) };
+      edits[F.key] = { v, src: cur.src, at: todayISO() };
     });
     const fail = text => { $("factsMsg").textContent = text; $("factsMsg").className = "msg err"; };
     if (need.length) return fail("Впишите число: " + need.join(", ") + ". Источник без числа не сохраняется.");
     if (bad.length) return fail("Не число: " + bad.join(", ") + ". Впишите только цифры, например 640.");
     if (typo.length) return fail("Похоже на опечатку: " + typo.join(", ") + ". Впишите сумму целиком, например 1050.");
     if (!Object.keys(edits).length) { $("factsMsg").textContent = "Ничего не изменилось."; $("factsMsg").className = "msg"; return; }
-    savePlaceDoc("factsForm", cur => {
-      const facts = Object.assign({}, cur.facts);
-      Object.entries(edits).forEach(([k, v]) => { if (v) facts[k] = v; else delete facts[k]; });
-      return Object.assign({}, cur, { facts });
-    }, "factsMsg", "Цифры сохранены");
+    savePlaceDoc("factsForm", Object.fromEntries(Object.entries(edits).map(([k, v]) => ["facts." + k, v])), "factsMsg", "Цифры сохранены");
   });
-  $("showEmpty").addEventListener("change", e => { state.showEmpty = e.target.checked; e.target.closest(".block").querySelector(".subtable").innerHTML = subtableHTML(state.M, state.M.PLACE[p.id] || p, state.showEmpty); });
+  $("showEmpty").addEventListener("change", e => { state.showEmpty = e.target.checked; e.target.closest(".block").querySelector(".subtable").innerHTML = subtableHTML(state.M, state.M.PLACE[p.id] || p, state.showEmpty, typed); });
   const pf = $("placeForm");
   const cardIn = () => { const f = new FormData(pf); return { name: String(f.get("name") || "").trim(), status: M.isBase(p) ? p.status : f.get("status"), archetype: String(f.get("archetype") || "").trim(), reason: String(f.get("reason") || "").trim(), questions: String(f.get("questions") || "").trim() }; };
   const cardOrig = cardIn();
@@ -503,7 +583,7 @@ function renderPlace(id) {
     Object.keys(now).forEach(k => { if (now[k] !== cardOrig[k]) edits[k] = now[k]; });
     if ("name" in edits && !edits.name) { $("placeMsg").textContent = "Название не может быть пустым."; $("placeMsg").className = "msg err"; return; }
     if (!Object.keys(edits).length) { $("placeMsg").textContent = "Ничего не изменилось."; $("placeMsg").className = "msg"; return; }
-    savePlaceDoc("placeForm", cur => Object.assign({}, cur, edits), "placeMsg", "Карточка сохранена");
+    savePlaceDoc("placeForm", edits, "placeMsg", "Карточка сохранена");
   });
   el.querySelector("[data-focus]")?.addEventListener("click", e => { e.preventDefault(); focusPlace(p.id); });
   if (state.flashTrip) {
@@ -514,14 +594,6 @@ function renderPlace(id) {
   fillSimilar(p);
 }
 
-function parseAmount(raw) {
-  let s = String(raw).replace(/[\s\u00a0€$₽]/g, "");
-  if (/^[1-9]\d{0,2}([.,]\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
-  else if (s.includes(".") && s.includes(",")) { const i = Math.max(s.lastIndexOf("."), s.lastIndexOf(",")); s = s.slice(0, i).replace(/[.,]/g, "") + "." + s.slice(i + 1); }
-  else s = s.replace(",", ".");
-  return Number(s);
-}
-
 const ARCHETYPES = ["курорт", "малый курорт", "город у моря", "мегаполис", "столица", "горы"];
 
 function factsHTML(p) {
@@ -529,21 +601,21 @@ function factsHTML(p) {
   const F = state.schema.facts || [];
   const dis = canWrite() ? "" : " disabled";
   const spb = state.M.places.find(state.M.isBase);
-  return `<p class="small muted">${base ? `С этими цифрами сравниваются цифры других мест: в полтора раза дороже СПб — минус балл. Пустое поле — берётся ориентир по умолчанию; где его нет (${F.filter(f => f.rule === "money" && !f.ref).map(f => esc(f.name.toLowerCase())).join(", ")}), без цифры СПб сравнить не с чем.` : "Цифры вносятся один раз на место, вместо оценки 1–5: приложение само сравнит их с СПб. Можно попросить Claude найти их по объявлениям."}</p>` + F.map(f => {
+  return `<p class="small muted">${base ? `С этими цифрами сравниваются цифры других мест: в полтора раза дороже СПб — минус балл. Пустое поле — берётся ориентир по умолчанию; где его нет (${F.filter(f => f.rule === "money" && !f.ref).map(f => esc(f.name.toLowerCase())).join(", ")}), без цифры СПб сравнить не с чем.` : "Цифры вносятся один раз на место, вместо оценки 1–5: приложение само сравнит их с СПб. Цветная плашка рядом с названием — получившаяся оценка 1–5, где 3 — как в СПб. Можно попросить Claude найти цифры по объявлениям."}</p>` + F.map(f => {
     const cur = p.facts && p.facts[f.key];
     const ref = factRef(f, state.M.places);
-    const sc = base ? null : factScore(f, cur ? Number(cur.v) : null, ref);
+    const sc = base ? null : factScore(f, factValue(p, f.key), ref);
     return `<div class="fact">
-      <label class="field"><span class="lbl">${esc(f.name)}, ${esc(f.unit)}${sc != null ? ` <span class="badge" style="background:${scoreHex(sc)};color:${inkOn(scoreHex(sc))}">${fmt(sc)}</span>` : ""}</span>
+      <label class="field"><span class="lbl">${esc(f.name)}, ${esc(f.unit)}${sc != null ? ` <span class="badge" title="Оценка ${fmt(sc)} из 5 для итога, 3 — как в СПб" aria-label="оценка ${fmt(sc)} из 5" style="background:${scoreHex(sc)};color:${inkOn(scoreHex(sc))}">${fmt(sc)}</span>` : ""}</span>
         <input type="text" inputmode="decimal" name="fact_${f.key}" value="${cur ? esc(String(cur.v)) : ""}" placeholder="${base && f.ref ? "по умолчанию " + f.ref : ""}"${dis}></label>
       <label class="field src"><span class="lbl">Откуда</span><input type="text" name="src_${f.key}" value="${cur ? esc(cur.src || "") : ""}" placeholder="сайт, число объявлений"${dis}></label>
-      <span class="small muted">${esc(f.hint)}${!base && f.rule === "money" ? ref ? ` СПб: €${ref}.` : ` Балла нет, пока не вписан чек СПб: ${spb ? `<a href="${placeHref(spb.id)}">досье СПб</a>` : "досье СПб"}, «Цифры».` : ""}${cur && cur.at ? ` Вписано ${esc(cur.at)}.` : ""}</span>
+      <span class="small muted">${esc(f.hint)}${!base && f.rule === "money" ? ref ? ` СПб: €${ref}.` : ` Балла нет, пока не вписан чек СПб: ${spb ? `<a href="${placeHref(spb.id)}">досье СПб</a>` : "досье СПб"}, «Цифры».` : ""}${cur && cur.at ? ` Вписано ${esc(dayRu(cur.at).replace(/\.$/, ""))}.` : ""}</span>
     </div>`;
   }).join("");
 }
 
 function climLegend(name, withRef) {
-  return `<div class="legend small"><span><i class="sw v"></i>${esc(name)}, средняя °C</span>${withRef ? `<span><i class="sw base" style="width:14px;height:0;border-top:2px dashed var(--base)"></i>СПб, °C</span>` : ""}<span><i class="sw" style="background:var(--pos);opacity:.4;border-radius:2px"></i>осадки, мм — модель, у моря и в горах бывает завышено</span></div>`;
+  return `<div class="legend small"><span><i class="sw v"></i>${esc(name)}, средняя °C</span>${withRef ? `<span><i class="sw base" style="width:14px;height:0;border-top:2px dashed var(--muted)"></i>СПб, °C</span>` : ""}<span><i class="sw" style="background:var(--pos);opacity:.4;border-radius:2px"></i>осадки, мм — модель, у моря и в горах бывает завышено</span></div>`;
 }
 
 async function fillSimilar(p) {
@@ -553,6 +625,11 @@ async function fillSimilar(p) {
   if (!state.sim) state.sim = new Similar(state.world, state.schema.groups);
   const city = state.world.placeCity(p);
   if (!p.cc && !city) { box.innerHTML = `<p class="small muted">У места нет координат и страны — сравнивать не с чем.</p>`; return; }
+  if (p.lat == null || !city) {
+    box.innerHTML = `<p class="small muted">У места нет координат, поэтому похожие ищем только по данным страны: климат и размер города не сравниваются.</p>` + similarCountriesHTML(state.sim.similarCountries(p.cc, W(), 8));
+    box.addEventListener("click", e => { const b = e.target.closest("[data-country]"); if (b) { go("#/map"); setTimeout(() => showCountry(b.dataset.country), 60); } });
+    return;
+  }
   const sp = state.sim.similarSplit({ cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }, W());
   if ($("simBox") !== box) return;
   box.innerHTML = similarSplitHTML(sp, p.cc) + (sp.home.length || sp.abroad.length ? `<div class="btns" style="margin-top:10px"><button type="button" class="btn ghost small" id="simMap">Показать на карте</button></div>` : "");
@@ -568,20 +645,22 @@ function renderRate(arg) {
   if (!state.form) {
     state.form = new RateForm($("rateForm"), state.schema, {
       canWrite,
-      save: (body, { isNew, baseOid, questions } = {}) => {
-        const extra = () => { const p = state.M.PLACE[body.place]; return questions && p ? [state.data.placeChange(Object.assign({}, p, { questions: p.questions ? p.questions.trim() + "\n" + questions : questions }))] : []; };
-        return state.data.saveRating(body, { isNew, baseOid, extra: extra() }).catch(err => {
-          if (err.code !== "clash" || !(err.paths || []).every(x => x.startsWith("places/"))) throw err;
-          rebuild();
-          return state.data.saveRating(body, { isNew, baseOid, extra: extra() });
-        });
-      },
+      save: (body, { isNew, baseOid, questions } = {}) => state.data.saveRating(body, { isNew, baseOid, questions }),
       saved: (res, placeId) => {
         savedNow(res.r);
-        toast(res.r === "queued" ? "Нет связи: оценка сохранена на телефоне и отправится позже" : "Сохранено. Рейтинг обновился.");
+        const M = state.M, who = res.doc && res.doc.who, partner = M.PEOPLE.find(w => w !== who), st = state.data.status;
+        const blind = partner && me() === who && !M.full.ratingsOf(placeId).some(r => r.who === partner);
+        const text = res.r === "queued"
+          ? (st === "auth" ? `Ключ не подходит: оценка сохранена ${onDevice()} и отправится, когда вы замените ключ в настройках` : st === "error" ? `GitHub не отвечает: оценка сохранена ${onDevice()} и отправится сама` : `Нет связи: оценка сохранена ${onDevice()} и отправится позже`)
+          : ["Сохранено.", M.ownEnough(placeId) ? "Рейтинг обновился." : "В рейтинг место попадёт, когда будут ответы хотя бы на половину главных ★ вопросов.", blind ? `${partner} не увидит вашу оценку, пока не оценит место.` : ""].filter(Boolean).join(" ");
+        const place = (M.PLACE[placeId] || {}).name;
         state.flashTrip = res.doc && res.doc.id;
-        go(placeHref(placeId));
+        if (state.route.name === "rate") { toast(text); go(placeHref(placeId)); } else toast(res.r === "queued" ? text : `Сохранено: ${place || "оценка"}`);
       },
+      failed: () => { if (state.route.name !== "rate") toast("Оценка не сохранена — ответы остались во вкладке «Оценить»"); },
+      placeQuestions: id => (state.M.PLACE[id] || {}).questions || "",
+      isDeleted: rid => { const r = state.data.docOf(`ratings/${rid}.json`); return !r || !!r.deleted; },
+      emptyNote,
       remove: (rid, oid) => {
         const r = state.data.view().ratings.find(x => x.id === rid);
         if (!r) return Promise.reject(new Error("Оценка не найдена"));
@@ -649,7 +728,7 @@ function renderSettings() {
   const ind = state.world.indicators;
   const installFirst = isPhone() && !isStandalone();
   const install = `<section class="block"><h2>${installFirst ? "Сначала: установите на экран «Домой»" : "На экран «Домой»"}</h2>
-      <div class="panel pad help">${/Android/i.test(navigator.userAgent) ? `<span>Android: Chrome → ⋮ → «Добавить на главный экран». Дальше открывайте с иконки, как обычное приложение.</span>` : `<span>iPhone: Safari → Поделиться → «На экран „Домой“». Дальше открывайте с иконки: так данные не стираются через неделю, как во вкладке Safari.</span>`}<span>У приложения с экрана «Домой» своё хранилище, поэтому ключ доступа вставляется уже в нём.</span></div>
+      <div class="panel pad help">${/Android/i.test(navigator.userAgent) ? `<span>Android: Chrome → ⋮ → «Добавить на главный экран». Дальше открывайте с иконки, как обычное приложение.</span>` : `<span>iPhone: Safari → Поделиться → «На экран „Домой“» (на английском iPhone: Share → Add to Home Screen). Дальше открывайте с иконки: так данные не стираются через неделю, как во вкладке Safari.</span>`}<span>У приложения с экрана «Домой» своё хранилище, поэтому ключ доступа вставляется уже в нём.</span></div>
     </section>`;
   $("v-settings").innerHTML = `
     <header><h1>Настройки</h1></header>
@@ -664,8 +743,8 @@ function renderSettings() {
         <input type="text" name="username" value="where-to-live-${esc(slugMe())}" autocomplete="username" hidden>
         <label class="field"><span class="lbl">Ключ доступа ${d.hasToken ? "(уже сохранён; вставьте новый, чтобы заменить)" : ""}</span><input type="password" name="token" placeholder="github_pat_…" spellcheck="false" autocapitalize="off" autocomplete="current-password"></label>
         <div class="btns"><button type="submit" class="btn">Сохранить и проверить</button>${d.hasToken ? `<button type="button" class="btn danger" id="forget">Забыть ключ на этом устройстве</button>` : ""}</div>
-        <p class="msg${d.status === "auth" || d.status === "error" ? " err" : ""}" id="tokenMsg" role="status">${d.hasToken ? esc(statusLine()) : ""}</p>
-        <details><summary class="small">Как получить ключ</summary><ol class="small help" style="padding-left:18px">
+        <p class="msg${d.status === "auth" || d.status === "error" ? " err" : ""}" id="tokenMsg" role="status">${d.hasToken ? statusHTML() : ""}</p>
+        <details${d.hasToken ? "" : " open"}><summary class="small">Как получить ключ</summary><ol class="small help" style="padding-left:18px">
           <li>Откройте <a href="${esc(tokenUrl)}" target="_blank" rel="noopener noreferrer">создание ключа на GitHub</a> (войти под аккаунтом Михаила). Имя, срок «без срока» и право Contents: Read and write уже подставлены.</li>
           <li>Repository access → Only select repositories → <b>${esc(d.repo.split("/")[1] || "where-to-live-data")}</b>.</li>
           <li>Generate token, скопируйте и вставьте сюда. Для телефона Вики — отдельный ключ с её именем, чтобы отзывать независимо.</li>
@@ -681,6 +760,7 @@ function renderSettings() {
         <div class="seg" role="group" aria-label="Тема" id="themeSeg">${[["auto", "Как в системе"], ["light", "Светлая"], ["dark", "Тёмная"]].map(([k, n]) => `<button type="button" data-theme="${k}" aria-pressed="${k === theme}">${n}</button>`).join("")}</div>
         <label class="toggle"><input type="checkbox" id="useData"${useData() ? " checked" : ""}> Учитывать мировые показатели в итоге (колонка «Данные»)</label>
         <p class="small muted">Показатели страны и климат города переводятся в шкалу 1–5, где Россия/СПб = 3, и входят в итог подкатегории по правилам методики: где туристу видно мало, у данных больше веса.</p>
+        <div class="btns"><button type="button" class="btn ghost small" id="helpBtn">Как пользоваться картой</button></div>
       </div>
     </section>
     ${installFirst || isStandalone() ? "" : install}
@@ -691,7 +771,7 @@ function renderSettings() {
       <div class="panel pad small help">
         <span>Карта: © участники OpenStreetMap (ODbL), тайлы OSM. Поиск: Nominatim, данные © OpenStreetMap. Границы: Natural Earth (public domain), показаны de facto.</span>
         <span>Города: GeoNames (CC BY 4.0). Климат: CHELSA V2.1, 1981–2010 (CC0). Световой день — расчёт по формуле NOAA. Аэропорты с регулярными рейсами: OurAirports (public domain), аэропорты стран, куда с паспортом РФ нужна виза, не учитываются.</span>
-        ${ind.length ? `<span>Показатели стран (выгрузка ${esc(state.world.generated)}): ${[...new Set(ind.map(i => `${i.source}${i.license ? " (" + i.license + ")" : ""}`))].map(esc).join("; ")}. Значения переведены в шкалу 1–5 приложением.</span>` : ""}
+        ${ind.length ? `<span>Показатели стран (выгрузка ${esc(dayRu(state.world.generated))}): ${[...new Set(ind.map(i => `${i.source}${i.license ? " — " + i.license : ""}`))].map(esc).join("; ")}. Значения переведены в шкалу 1–5 приложением.</span>` : ""}
         <span>Код: <a href="https://github.com/Mihinator3000/where-to-live" target="_blank" rel="noopener noreferrer">github.com/Mihinator3000/where-to-live</a>.</span>
       </div>
     </section>`;
@@ -704,19 +784,24 @@ function renderSettings() {
     const f = new FormData(e.target);
     const token = String(f.get("token") || "").trim();
     const repo = String(f.get("repo") || DEFAULT_REPO).trim() || DEFAULT_REPO;
-    const msg = $("tokenMsg");
+    const msg = $("tokenMsg"), btn = e.target.querySelector("[type=submit]");
+    if (btn.disabled) return;
     msg.className = "msg";
     const fail = text => { msg.textContent = text; msg.className = "msg err"; };
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("Репозиторий укажите как владелец/имя, например Mihinator3000/where-to-live-data.");
     if (!token && !d.hasToken) return fail("Вставьте ключ доступа: без него данные не загрузить.");
+    btn.disabled = true; btn.textContent = "Проверяю…";
+    const done = () => { if (btn.isConnected) { btn.disabled = false; btn.textContent = "Сохранить и проверить"; } };
     if (token) {
       msg.textContent = "Проверяю ключ…";
       const [owner, name] = repo.split("/");
       try {
         await new GitHubStore({ owner, repo: name, token }).load();
       } catch (err) {
-        msg.textContent = (err.code === "offline" ? "Нет связи, ключ не проверен и не сохранён." : "Ключ не подошёл, он не сохранён.") + (d.hasToken ? " Остался прежний ключ." : "") + (err.message && err.code !== "auth" && err.code !== "offline" ? " " + err.message : "");
+        const dataRepo = name || "where-to-live-data";
+        msg.textContent = (err.code === "offline" ? "Нет связи, ключ не проверен и не сохранён." : err.code === "access" ? `Ключ не сохранён: он не видит хранилище ${dataRepo}. Создайте ключ заново и на шаге 2 выберите Repository access → Only select repositories → ${dataRepo}.` : err.code === "auth" ? "Ключ не подошёл, он не сохранён. Проверьте, что скопировали его целиком (начинается с github_pat_) и что у него не истёк срок." : "Ключ не подошёл, он не сохранён." + (err.message ? " " + err.message : "")) + (d.hasToken ? " Остался прежний ключ." : "");
         msg.className = "msg err";
+        done();
         return;
       }
       e.target.querySelector('[name="token"]').value = "";
@@ -724,9 +809,10 @@ function renderSettings() {
     d.setCredentials(repo, token || null);
     msg.textContent = "Загружаю данные…";
     await d.refresh();
-    msg.textContent = statusLine();
+    done();
+    msg.innerHTML = statusHTML();
     msg.className = "msg" + (d.status === "live" ? "" : " err");
-    if (d.status === "live") { toast("Подключено: данные загружены"); renderSettings(); }
+    if (d.status === "live") { toast("Подключено: данные загружены"); if (token) state.fitPending = true; renderSettings(); }
   });
   $("forget")?.addEventListener("click", e => {
     const b = e.currentTarget;
@@ -736,7 +822,7 @@ function renderSettings() {
       return;
     }
     d.forget();
-    toast(d.pending.length ? `Ключ и кэш удалены. Неотправленные правки (${d.pending.length}) уйдут после нового ключа` : "Ключ и кэш удалены с этого устройства");
+    toast(d.pending.length ? `Ключ и данные удалены с этого устройства. Неотправленные правки (${d.pending.length}) уйдут после нового ключа` : "Ключ и данные удалены с этого устройства");
     renderSettings();
   });
   $("exportBtn").addEventListener("click", () => {
@@ -748,16 +834,15 @@ function renderSettings() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });
+  $("helpBtn").addEventListener("click", () => { local.del("introSeen"); state.introShown = false; go("#/map"); });
   $("refreshBtn").addEventListener("click", () => { if (d.hasToken) d.refresh(); else { $("tokenMsg").textContent = "Сначала вставьте ключ доступа выше."; $("tokenMsg").className = "msg err"; } });
 }
 
-function statusLine() {
-  const d = state.data;
-  if (d.status === "live") {
-    const v = d.view();
-    return `Подключено: мест ${v.places.length}, оценок ${v.ratings.filter(r => !r.deleted).length}.`;
-  }
-  return d.error || "";
+function statusHTML() {
+  const d = state.data, M = state.M;
+  if (d.status !== "live") return esc(d.error || "");
+  const n = M.places.filter(p => !M.isBase(p)).length, base = M.places.find(M.isBase);
+  return esc(`Подключено: мест ${n}${base ? " и СПб" : ""}, оценок ${M.full.ratings.length}.`) + (n ? ` Дальше: <a href="#/rank">рейтинг</a> или <a href="#/map">карта</a>.` : ` Мест пока нет: <a href="#/map">добавьте первое место через поиск на карте</a>.`) + (me() ? "" : " Теперь выберите выше, кто вы на этом устройстве: от этого зависит, чьи оценки скрыты.");
 }
 
 /* ---------- map ---------- */
@@ -834,18 +919,18 @@ function cityColorer() {
     const list = state.sim.similarCities(target.x, W(), { k: 60, perCountry: 8 });
     const pct = new Map(list.map(x => [x.city.id, x.pct]));
     const rank = new Map(list.map((x, i) => [x.city.id, list.length > 1 ? i / (list.length - 1) : 0]));
-    return { list: list.map(x => x.city), fn: c => { const q = rank.get(c.id); return q == null ? null : { fill: scoreHex(5 - 2 * q), r: 7 - 3 * q }; }, label: c => `${c.n}: похоже на ${pct.get(c.id)}%`, legend: { title: `Похожие на «${target.name}», топ-${list.length}`, ramp: [3, 3.5, 4, 4.5, 5].map(scoreHex), lo: "меньше", hi: "больше" } };
+    return { list: list.map(x => x.city), fn: c => { const q = rank.get(c.id); return q == null ? null : { fill: scoreHex(5 - 2 * q), r: 7 - 3 * q }; }, label: c => `${c.n}: похоже на ${pct.get(c.id)}%`, target, legend: { title: `Похожие на «${target.name}», топ-${list.length}`, ramp: [3, 3.5, 4, 4.5, 5].map(scoreHex), lo: "менее похожи", hi: "более похожи", note: `кольцо — «${target.name}», с ним сравниваем` } };
   }
   if (L.city === "predict") {
     const fn = predictor();
     if (!fn) return null;
     const cache = new Map();
     const get = c => { if (!cache.has(c.id)) cache.set(c.id, fn({ cc: c.cc, city: c })); return cache.get(c.id); };
-    return { list: Wd.cities, fn: c => { const r = get(c); return r ? { fill: scoreHex(r.score) } : null; }, label: c => { const r = get(c); return r ? `${c.n}: прогноз ${fmt(r.score)} (уверенность ${Math.round(r.conf * 100)}%)` : c.n; }, legend: { title: "Прогноз для нас по похожим местам", rel: true } };
+    return { list: Wd.cities, fn: c => { const r = get(c); return r ? { fill: scoreHex(r.score) } : null; }, label: c => { const r = get(c); return r ? `${c.n}: прогноз ${fmt(r.score)} (уверенность ${Math.round(r.conf * 100)}%)` : c.n; }, legend: { title: "Прогноз для нас по похожим местам", rel: true, mid: "3 — как в СПб" } };
   }
   const ind = Wd.CIND[L.city];
   if (!ind) return null;
-  if (ind.scale && ind.dir) return { list: Wd.cities, fn: c => { const s = Wd.cityScore(c, ind.key); return s == null ? null : { fill: scoreHex(s) }; }, label: c => `${c.n}: ${fmtValue(ind, ind.get(c))}`, legend: { title: ind.name, rel: true, ref: "СПб" } };
+  if (ind.scale && ind.dir) return { list: Wd.cities, fn: c => { const s = Wd.cityScore(c, ind.key); return s == null ? null : { fill: scoreHex(s) }; }, label: c => `${c.n}: ${fmtValue(ind, ind.get(c))}`, legend: ind.scale.type === "abs" ? { title: ind.name, rel: true, mid: "3 из 5", note: "фиксированные пороги, не от СПб" } : { title: ind.name, rel: true, ref: "СПб" } };
   const vals = Wd.cities.map(c => ind.get(c));
   const br = Wd.quantiles(vals, 5);
   return { list: Wd.cities, fn: c => { const v = ind.get(c); if (v == null) return null; let k = br.findIndex(b => v < b); if (k < 0) k = 4; return { fill: CIVIDIS[k] }; }, label: c => `${c.n}: ${fmtValue(ind, ind.get(c))}`, legend: { title: ind.name, ramp: CIVIDIS, lo: fmtValue(ind, Math.min(...vals.filter(v => v != null))), hi: fmtValue(ind, Math.max(...vals.filter(v => v != null))) } };
@@ -858,7 +943,7 @@ function predictor() {
   const rated = M.candidates().filter(p => M.ratingsOf(p.id).length).map(p => {
     const t = M.total(p, norm, "final");
     const city = state.world.placeCity(p);
-    return t.score == null ? null : { cc: p.cc, city: city && !city.synthetic ? city : null, score: t.score };
+    return t.score == null ? null : { cc: p.cc, city: city && !city.synthetic ? city : null, score: t.score, name: p.name };
   }).filter(Boolean);
   return state.sim.predictor(rated, norm);
 }
@@ -883,15 +968,17 @@ function legendHTML() {
   const relRamp = [1, 2, 3, 4, 5].map(v => `<i style="background:${scoreHex(v)}"></i>`).join("");
   if (leg) {
     parts.push(`<div><b>${esc(leg.ind.name)}</b></div>`);
+    const abs = leg.ind.scale && leg.ind.scale.type === "abs";
     if (leg.raw) parts.push(`<div class="ramp">${leg.ramp.map(c => `<i style="background:${c}"></i>`).join("")}</div><div class="ends"><span>${esc(leg.lo)}</span><span>квантили</span><span>${esc(leg.hi)}</span></div>`);
-    else parts.push(`<div class="ramp">${relRamp}</div><div class="ends"><span>хуже</span><span>≈ Россия</span><span>лучше</span></div>`);
-    parts.push(`<div class="src">${esc(leg.ind.source || "")} · без заливки — нет данных</div>`);
+    else parts.push(`<div class="ramp">${relRamp}</div><div class="ends"><span>хуже</span><span>${abs ? "3 из 5" : "≈ Россия"}</span><span>лучше</span></div>`);
+    parts.push(`<div class="src">${leg.raw ? "каждый цвет — пятая часть стран, от меньших значений к большим · " : abs ? "фиксированные пороги, не от России · " : ""}${esc(leg.ind.source || "")} · без заливки — нет данных</div>`);
   }
   const cc = state.cityLegend;
   if (cc) {
     parts.push(`<div style="margin-top:4px"><b>Города: ${esc(cc.title)}</b></div>`);
     if (cc.ramp) parts.push(`<div class="ramp">${cc.ramp.map(c => `<i style="background:${c}"></i>`).join("")}</div><div class="ends"><span>${esc(cc.lo)}</span><span>${esc(cc.hi)}</span></div>`);
-    else parts.push(`<div class="ramp">${relRamp}</div><div class="ends"><span>${esc(cc.lo || "хуже")}</span><span>${esc(cc.ref ? "≈ " + cc.ref : "")}</span><span>${esc(cc.hi || "лучше")}</span></div>`);
+    else parts.push(`<div class="ramp">${relRamp}</div><div class="ends"><span>${esc(cc.lo || "хуже")}</span><span>${esc(cc.mid || (cc.ref ? "≈ " + cc.ref : ""))}</span><span>${esc(cc.hi || "лучше")}</span></div>`);
+    if (cc.note) parts.push(`<div class="src">${esc(cc.note)}</div>`);
   }
   return parts.join("");
 }
@@ -904,17 +991,28 @@ function layersHTML() {
   return `
     <div class="field"><label class="lbl" for="lyCountry">Раскраска стран</label>
       <select id="lyCountry"><option value="">Без раскраски</option>${byGroup.map(x => `<optgroup label="${esc(x.g.name)}">${x.list.map(i => `<option value="${i.key}"${i.key === L.country ? " selected" : ""}>${esc(i.name)}</option>`).join("")}</optgroup>`).join("")}</select>
-      ${L.country ? `<div class="seg" role="group" aria-label="Шкала раскраски" id="lyMode"><button type="button" data-mode="rel" aria-pressed="${L.mode !== "raw"}">Относительно России</button><button type="button" data-mode="raw" aria-pressed="${L.mode === "raw"}">Сырые значения</button></div>` : ""}
+      ${L.country ? `<div class="seg" role="group" aria-label="Шкала раскраски" id="lyMode"><button type="button" data-mode="rel" aria-pressed="${L.mode !== "raw"}">Относительно России</button><button type="button" data-mode="raw" aria-pressed="${L.mode === "raw"}">Сырые значения</button></div><span class="desc">«Относительно России» — оценка 1–5 для нас: средний цвет — как в России, синее — лучше, красное — хуже. «Сырые значения» — сами цифры показателя: каждый цвет — пятая часть стран.</span>` : ""}
     </div>
     <div class="field"><label class="lbl" for="lyCity">Города мира</label>
       <select id="lyCity"><option value="">Не показывать</option>${CITY_INDICATORS.map(i => `<option value="${i.key}"${i.key === L.city ? " selected" : ""}>${esc(i.name)}</option>`).join("")}<option value="similar"${L.city === "similar" ? " selected" : ""}${simT ? "" : " disabled"}>${simT ? `Похожие на «${esc(simT.name)}»` : "Похожие на выбранное место (нажмите место или город на карте)"}</option><option value="predict"${L.city === "predict" ? " selected" : ""}${ratedCount >= 3 ? "" : " disabled"}>Прогноз для нас${ratedCount >= 3 ? "" : " (нужно ≥ 3 оценённых места)"}</option></select>
-      <span class="desc">Точки городов от 15 тыс. жителей. Климат — средние 1981–2010 (CHELSA), синее — лучше СПб, красное — хуже. «Похожие» и «Прогноз» строятся по вашим весам.</span>
+      <span class="desc">Около 4 тыс. городов, в основном крупнее 15 тыс. жителей.${cityDesc(L.city)} «Прогноз для нас» — понравился бы нам город, судя по похожим оценённым местам; считается по весам из «Рейтинга».</span>
       ${L.city === "predict" ? predictTopHTML() : ""}
     </div>
-    <label class="toggle"><input type="checkbox" id="lyPlaces"${L.places ? " checked" : ""}> Наши места: цвет и число — итог 1–5; полый кружок — своих оценок мало</label>
+    <label class="toggle"><input type="checkbox" id="lyPlaces"${L.places ? " checked" : ""}> Наши места</label>
+    <span class="desc">Кружок — наше место, число — итог 1–5. Полый — своих оценок мало. Бледный — отсев или вето. Квадрат — СПб. Кружок с числом — несколько мест рядом.</span>
     <label class="toggle"><input type="checkbox" id="lyVisited"${L.visited ? " checked" : ""}> Страны, где были: обведены контуром</label>
     <span class="desc">Сплошной — были оба, пунктир фиолетовый — только ${esc(state.schema.people[0])}, оранжевый — только ${esc(state.schema.people[1])}.</span>
     <div class="btns"><button type="button" class="btn ghost small" id="lyClose">Готово</button></div>`;
+}
+
+function cityDesc(key) {
+  if (!key) return "";
+  if (key === "similar") return " Ярче и крупнее — более похожие.";
+  if (key === "predict") return " Цвет — прогноз 1–5, где 3 — как в СПб.";
+  const ind = state.world.CIND[key];
+  if (!ind) return "";
+  if (ind.scale && ind.dir) return ind.scale.type === "abs" ? " Цвет — оценка 1–5 по фиксированным порогам, синее — лучше." : " Синее — лучше СПб, красное — хуже.";
+  return " Цвет — само значение: от тёмного (меньше) к жёлтому (больше), не «лучше» или «хуже».";
 }
 
 function predictTopHTML() {
@@ -923,7 +1021,7 @@ function predictTopHTML() {
   const ours = state.M.places.filter(p => p.lat != null);
   const list = state.world.cities.filter(c => !ours.some(p => haversine(p, c) < 15)).map(c => ({ c, r: fn({ cc: c.cc, city: c }) })).filter(x => x.r).sort((a, b) => b.r.score - a.r.score).slice(0, 10);
   if (!list.length) return "";
-  return `<div class="ptop"><span class="lbl">Лучшие по прогнозу</span>${list.map(x => `<button type="button" data-pcity="${x.c.id}"><span>${esc(x.c.n)}<span class="muted"> · ${esc(state.world.nameOf(x.c.cc))}</span></span><span class="num">${fmt(x.r.score)}</span></button>`).join("")}<span class="desc">Прогноз — как нам понравилось бы, судя по оценённым местам, похожим на этот город.</span></div>`;
+  return `<div class="ptop"><span class="lbl">Лучшие по прогнозу</span>${list.map(x => `<button type="button" data-pcity="${x.c.id}"><span>${esc(x.c.n)}<span class="muted"> · ${esc(state.world.nameOf(x.c.cc))}</span></span><span class="num">${fmt(x.r.score)}</span><small class="muted">уверенность ${Math.round(x.r.conf * 100)}%</small></button>`).join("")}<span class="desc">Прогноз — как нам понравилось бы, судя по оценённым местам, похожим на этот город. Уверенность ниже, когда похожих оценённых мест мало.</span></div>`;
 }
 
 function initMap() {
@@ -981,6 +1079,7 @@ function initMap() {
     if (item.type !== "remote") $("searchInput").value = "";
     if (item.type === "place") { openPlace(item.id, true); }
     else if (item.type === "city") { openCity(item.city, true); }
+    else if (item.type === "country") showCountry(item.iso);
     else if (item.type === "geo") { openGeo(item.geo); }
     else if (item.type === "remote") { runSearch($("searchInput").value.trim(), true); }
   });
@@ -1019,6 +1118,18 @@ function renderMap() {
       }
     }
   }
+  const tgt = state.layers.city === "similar" && state.world.cities ? similarTarget() : null;
+  if (state.simMark) { state.simMark.remove(); state.simMark = null; }
+  if (tgt && tgt.x.lat != null) state.simMark = window.L.circleMarker([tgt.x.lat, tgt.x.lon], { radius: 11, color: pal().ink, weight: 3, fill: false, interactive: false, pane: "places" }).addTo(mv.map);
+  const pts = state.layers.places && state.fitPending && !mv.restoreView() ? state.M.places.filter(p => p.lat != null).map(p => [p.lat, p.lon]) : [];
+  if (pts.length > 1) {
+    state.fitPending = false;
+    const wide = innerWidth >= 860;
+    mv.map.invalidateSize();
+    mv.map.fitBounds(window.L.latLngBounds(pts), { paddingTopLeft: [24, wide ? 70 : 80], paddingBottomRight: [24, wide ? 40 : 110], maxZoom: 6, animate: false });
+  }
+  $("mapNote").hidden = state.data.hasToken;
+  if (!state.data.hasToken) $("mapNote").innerHTML = `Данные не подключены — <a href="#/settings">вставьте ключ</a>, чтобы видеть наши места и оценки.`;
   const lg = legendHTML();
   $("legendBox").hidden = !lg;
   $("legendBox").innerHTML = lg;
@@ -1028,7 +1139,7 @@ function renderMap() {
 function openIntro() {
   state.sheet = { type: "intro" };
   openSheet(`<h3>Как пользоваться картой</h3>
-    <div class="help small"><span>Кружки — наши места: цвет и число — итог 1–5, где 3 — как в СПб; полый — своих оценок мало, итог пока по мировым данным. Квадрат — СПб. Кружок с числом — несколько мест рядом, нажмите, чтобы приблизить.</span><span>Нажмите на страну или город — увидите мировые данные и похожие места. Найти или добавить место — поиск сверху. «Слои» — раскраска стран и городов по показателям.</span><span>После поездки — вкладка «Оценить».</span>${state.data.hasToken ? "" : `<span>Чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</span>`}</div>
+    <div class="help small"><span><b>Здесь мы с Викой выбираем, где жить:</b> наши оценки и мировые данные (показатели стран, климат городов) сводятся в итог 1–5, где 3 — как в СПб.</span><span>Кружки — наши места; полый — своих оценок мало, бледный — отсев или вето. Квадрат — СПб, кружок с числом — несколько мест рядом.</span><span>Нажмите на страну или город — данные и похожие места. Поиск — найти или добавить место. После поездки — вкладка «Оценить».</span>${state.data.hasToken ? "" : `<span>Чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</span>`}</div>
     <div class="btns"><button type="button" class="btn" data-act="introok">Понятно</button></div>`);
 }
 
@@ -1062,9 +1173,11 @@ function runSearch(q, remote) {
   const mine = state.M.places.filter(p => normQ(p.name).includes(ql));
   cities.forEach(c => { const p = ownOf(c); if (p && !mine.includes(p)) mine.push(p); });
   mine.slice(0, 4).forEach(p => items.push({ type: "place", id: p.id, title: p.name, sub: p.country || "" }));
+  const Wn = state.world;
+  Object.keys(Wn.names || {}).filter(iso => [normQ(Wn.nameOf(iso)), normQ(Wn.enNameOf(iso))].some(n => n === ql || (ql.length >= 4 && n.startsWith(ql)))).slice(0, 2).forEach(iso => items.push({ type: "country", iso, title: Wn.nameOf(iso), sub: "страна" }));
   const exact = c => (normQ(c.n) === ql || normQ(c.en) === ql ? 1 : 0);
-  cities.filter(c => !ownOf(c)).sort((a, b) => exact(b) - exact(a)).slice(0, 5).forEach(c => items.push({ type: "city", city: c, title: c.n, sub: state.world.nameOf(c.cc) + (c.pop ? " · " + Math.round(c.pop / 1000).toLocaleString("ru-RU") + " тыс. жителей" : "") }));
-  const GROUP = { place: "Наши места", city: "Города мира", geo: "OpenStreetMap", remote: "" };
+  cities.filter(c => !ownOf(c)).sort((a, b) => exact(b) - exact(a)).slice(0, 5).forEach(c => items.push({ type: "city", city: c, title: c.n, sub: state.world.nameOf(c.cc) + (c.pop ? " · " + popRu(c.pop) : "") }));
+  const GROUP = { place: "Наши места", country: "Страны", city: "Города мира", geo: "OpenStreetMap", remote: "" };
   const show = (extra, note) => {
     state.searchItems = items.concat(extra || []);
     let last = "";
@@ -1077,7 +1190,7 @@ function runSearch(q, remote) {
     box.hidden = !state.searchItems.length && !note;
   };
   if (!remote) {
-    show([{ type: "remote", title: `Искать «${q}» везде`, sub: "Enter · поиск по OpenStreetMap" }]);
+    show([{ type: "remote", title: `Искать «${q}» везде`, sub: matchMedia("(pointer: coarse)").matches ? "нажмите — поиск по OpenStreetMap" : "Enter · поиск по OpenStreetMap" }]);
     return;
   }
   show([], "Ищу в OpenStreetMap…");
@@ -1117,8 +1230,8 @@ function closeSheet() {
 function scoreLine(M, p) {
   const t = placeScore(M, p, W());
   const per = M.PEOPLE.map((w, i) => { const s = M.hidden(p.id, w) ? null : M.total(p, W(), w).score; return s == null ? "" : `<span><i class="sw ${i ? "v" : "m"}"></i>${esc(w)} ${fmt(s)}</span>`; }).join("");
-  const own = M.ratingsOf(p.id).length;
-  return `<div class="bigscore"><b>${M.isBase(p) ? "3.0" : fmt(t.score)}</b><span class="muted small">${M.isBase(p) ? "база" : t.score == null ? "оценок нет" : `из 5, где 3 — как в СПб${own ? "" : " · только мировые данные"}`}</span></div>${per ? `<div class="legend">${per}</div>` : ""}`;
+  const own = M.ratingsOf(p.id).length, thin = !M.isBase(p) && own && !M.ownEnough(p.id);
+  return `<div class="bigscore"><b>${M.isBase(p) ? "3.0" : fmt(t.score)}</b><span class="muted small">${M.isBase(p) ? "база" : t.score == null ? "оценок нет" : `из 5, где 3 — как в СПб${own ? "" : " · только мировые данные"}${thin ? " · своих ответов мало, пока не в рейтинге" : ""}`}</span></div>${per ? `<div class="legend">${per}</div>` : ""}`;
 }
 
 function openPlace(id, fly) {
@@ -1129,11 +1242,16 @@ function openPlace(id, fly) {
   const rs = M.ratingsOf(p.id).filter(r => r.review && !M.hidden(p.id, r.who)).slice(-3).reverse();
   const hid = hiddenWho(M, p.id);
   const years = yearsLine(M, p.id);
+  const vetoR = !M.isBase(p) && M.vetoes().find(r => r.place === p.id);
+  const pf = !M.isBase(p) && !M.full.ratingsOf(p.id).length && state.world.cities ? predictor() : null, city = pf && state.world.placeCity(p), pr = pf && pf({ cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon });
   openSheet(`<h3>${esc(p.name)}</h3>
-    <div class="chips">${p.country ? `<span class="chip">${esc(p.country)}</span>` : ""}<span class="chip">${esc(p.status || "кандидат")}</span>${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">год здесь: ${esc(years)}</span>` : ""}<span class="chip">оценок: ${M.ratingsOf(p.id).length}</span></div>
+    <div class="chips">${p.country ? `<span class="chip">${esc(p.country)}</span>` : ""}<span class="chip">${esc(p.status || "кандидат")}</span>${vetoR ? `<span class="chip warn">вето</span>` : ""}${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">год здесь: ${esc(years)}</span>` : ""}${M.isBase(p) ? "" : `<span class="chip">оценок: ${M.full.ratingsOf(p.id).length}</span>`}</div>
     ${scoreLine(M, p)}
+    ${pr ? `<p class="small muted">Итог выше — по мировым данным. По похожим оценённым местам${pr.near && pr.near.length ? ` (${esc(pr.near.join(", "))})` : ""} прогноз для нас — ${fmt(pr.score)} из 5, уверенность ${Math.round(pr.conf * 100)}%.</p>` : ""}
+    ${p.status === "отсев" ? `<p class="small"><b>Отсев:</b> ${esc(p.reason || "причина не указана")}</p>` : ""}
+    ${vetoR ? `<p class="small"><b>Вето ${esc(gen(vetoR.who))}:</b> ${esc(vetoR.veto)}</p>` : ""}
     ${rs.map(r => `<div class="review ${r.who === M.PEOPLE[1] ? "v" : "m"}"><b>${esc(r.who)}${r.start ? " · " + esc(datesRu(r.start, r.end)) : ""}:</b> ${esc(r.review)}</div>`).join("")}
-    ${hid.length ? `<p class="small muted">Оценки: ${esc(hid.join(", "))} скрыты, пока вы не оцените место сами. <button type="button" class="linkbtn" data-reveal="${esc(p.id)}">Показать всё равно</button></p>` : ""}
+    ${hid.length ? `<p class="small muted">${hid.length > 1 ? "Оценки" : "Оценка"} ${esc(hid.map(gen).join(" и "))} ${hid.length > 1 ? "скрыты" : "скрыта"}, пока вы не оцените место сами. <button type="button" class="linkbtn" data-reveal="${esc(p.id)}">Показать всё равно</button></p>` : ""}
     <div class="btns"><a class="btn" href="${placeHref(p.id)}">Досье</a>${M.isBase(p) ? "" : `<a class="btn ghost" href="#/rate/new/${encodeURIComponent(p.id)}">Оценить</a>`}<button type="button" class="btn ghost" data-act="simplace" data-id="${esc(p.id)}">Похожие</button></div><div id="simPlaceBox"></div>`);
   if (fly && p.lat != null) state.mapView.flyTo(p.lat, p.lon, 10);
 }
@@ -1150,11 +1268,17 @@ function openCountry(iso, latlng) {
   const visited = visitedBy()[iso];
   state.mapView.showTemp(latlng.lat, latlng.lng);
   openSheet(`<h3>${esc(Wd.nameOf(iso))}</h3>
-    ${visited ? `<div class="chips"><span class="chip solid">были: ${esc([...visited].filter(x => x !== "*").join(", ") || "база")}</span></div>` : ""}
+    ${visited ? (() => { const who = [...visited].filter(x => x !== "*"), base = visited.has("*") && (M.places.find(M.isBase) || {}).name; return `<div class="chips"><span class="chip solid">${esc(who.length ? `были: ${who.join(", ")}${base ? ` · база — ${base}` : ""}` : `здесь база — ${base}`)}</span></div>`; })() : ""}
     ${ours.length ? `<div class="small">Наши места: ${ours.map(p => `<a href="${placeHref(p.id)}">${esc(p.name)}</a>`).join(", ")}</div>` : ""}
     <div class="btns"><button type="button" class="btn" data-act="simcountry" data-iso="${iso}">Похожие страны</button><button type="button" class="btn ghost" data-act="addhere">Добавить город в этой точке</button></div>
     <div id="simCountryBox"></div>
     <div class="world">${worldRowsHTML(iso, null, state.layers.country)}</div>`);
+}
+
+function showCountry(iso) {
+  const f = state.world.geo && state.world.geo.features.find(x => x.properties.iso3 === iso), bb = f && window.L.geoJSON(f).getBounds();
+  openCountry(iso, bb ? bb.getCenter() : { lat: 0, lng: 0 });
+  if (bb) state.mapView.map.flyToBounds(bb, { maxZoom: 6, duration: 0.8 });
 }
 
 function openCity(c, fly) {
@@ -1162,10 +1286,11 @@ function openCity(c, fly) {
   state.sheet = { type: "city", city: c };
   state.simCandidate = { type: "city", id: c.id };
   const own = state.M.places.find(p => p.lat != null && haversine(p, c) < 5);
-  const pf = Wd.cities ? predictor() : null, pr = pf && pf({ cc: c.cc, city: c });
+  const ownT = own && !state.M.isBase(own) && state.M.full.ratingsOf(own.id).length ? placeScore(state.M, own, W()) : null;
+  const pf = Wd.cities && !ownT ? predictor() : null, pr = pf && pf({ cc: c.cc, city: c });
   openSheet(`<h3>${esc(c.n)}</h3>
-    <div class="chips"><span class="chip">${esc(Wd.nameOf(c.cc))}</span>${c.pop ? `<span class="chip">${Math.round(c.pop / 1000).toLocaleString("ru-RU")} тыс. жителей</span>` : ""}<span class="chip">${esc(kgName(c.kg))}</span></div>
-    ${pr ? `<div class="bigscore"><b>${fmt(pr.score)}</b><span class="muted small">прогноз для нас по похожим оценённым местам · уверенность ${Math.round(pr.conf * 100)}%</span></div>` : ""}
+    <div class="chips"><span class="chip">${esc(Wd.nameOf(c.cc))}</span>${c.pop ? `<span class="chip">${popRu(c.pop)}</span>` : ""}${c.kg ? `<span class="chip" title="Тип климата по Кёппену">климат: ${esc(kgName(c.kg))}</span>` : ""}</div>
+    ${ownT && ownT.score != null ? `<div class="bigscore"><b>${fmt(ownT.score)}</b><span class="muted small">наш итог: из 5, где 3 — как в СПб</span></div>` : pr ? `<div class="bigscore"><b>${fmt(pr.score)}</b><span class="muted small">прогноз для нас: из 5, где 3 — как в СПб · по похожим оценённым местам · уверенность ${Math.round(pr.conf * 100)}%${pr.near && pr.near.length ? ` · ближе всего к: ${esc(pr.near.join(", "))}` : ""}</span></div>` : ""}
     ${Array.isArray(c.t) ? `<div class="clim">${climateSVG(c, Wd.spbCity)}</div>${climLegend(c.n, Wd.spbCity && Wd.spbCity !== c)}` : ""}
     <div class="btns">${own ? `<a class="btn" href="${placeHref(own.id)}">Наше место: ${esc(own.name)}</a>` : `<button type="button" class="btn" data-act="addcity">Добавить как место</button>`}<button type="button" class="btn ghost" data-act="simcity">Похожие города</button></div>
     <div id="simCityBox"></div>
@@ -1200,6 +1325,7 @@ async function addPlace(info) {
     savedNow(r);
     toast(r === "queued" ? "Нет связи: место отправится позже" : `Добавлено: ${saved.name}`);
     rebuild();
+    state.mapView.clearTemp();
     renderMap();
     openPlace(saved.id, false);
   } catch (err) {
@@ -1216,7 +1342,7 @@ async function onSheetClick(e) {
   if (!b) return;
   const Wd = state.world;
   if (b.dataset.city) { const c = Wd.cities.find(x => String(x.id) === b.dataset.city); if (c) openCity(c, true); return; }
-  if (b.dataset.country) { const iso = b.dataset.country; const f = Wd.geo.features.find(x => x.properties.iso3 === iso); const ll = f ? window.L.geoJSON(f).getBounds().getCenter() : { lat: 0, lng: 0 }; openCountry(iso, ll); state.mapView.map.flyToBounds(window.L.geoJSON(f).getBounds(), { maxZoom: 6, duration: 0.8 }); return; }
+  if (b.dataset.country) { showCountry(b.dataset.country); return; }
   const act = b.dataset.act;
   if (act === "introok") { closeSheet(); return; }
   if (act === "addhere") {
@@ -1228,12 +1354,13 @@ async function onSheetClick(e) {
       if (!g) { toast("Здесь не нашлось населённого пункта"); b.disabled = false; b.textContent = "Добавить город в этой точке"; return; }
       openGeo(Object.assign(g, { lat: Number(ll.lat.toFixed(5)), lon: Number(ll.lng.toFixed(5)) }));
     } catch (err) { toast(err.message); b.disabled = false; b.textContent = "Добавить город в этой точке"; }
-  } else if (act === "addgeo") {
-    const g = state.sheet.geo;
-    addPlace({ name: g.name, country: g.country, cc: Wd.iso3of(g.cc2), lat: g.lat, lon: g.lon, osm: g.osm });
-  } else if (act === "addcity") {
-    const c = state.sheet.city;
-    addPlace({ name: c.n, cc: c.cc, lat: c.lat, lon: c.lon, geonameid: c.id });
+  } else if (act === "addgeo" || act === "addcity") {
+    if (b.disabled) return;
+    const label = b.textContent;
+    b.disabled = true; b.textContent = "Добавляю…";
+    const g = state.sheet.geo, c = state.sheet.city;
+    await addPlace(act === "addgeo" ? { name: g.name, country: g.country, cc: Wd.iso3of(g.cc2), lat: g.lat, lon: g.lon, osm: g.osm } : { name: c.n, cc: c.cc, lat: c.lat, lon: c.lon, geonameid: c.id });
+    if (b.isConnected) { b.disabled = false; b.textContent = label; }
   } else if (act === "country") {
     const iso = b.dataset.iso; const g = state.sheet.geo;
     openCountry(iso, { lat: g.lat, lng: g.lon });
@@ -1255,12 +1382,13 @@ async function onSheetClick(e) {
 function showSim(sim) {
   const Wd = state.world;
   if (!state.sim) state.sim = new Similar(Wd, state.schema.groups);
-  if (sim.act === "simcountry") { if ($("simCountryBox")) $("simCountryBox").innerHTML = `<h2 style="margin:4px 0">Похожие страны · веса «${esc(state.preset)}»</h2>` + similarCountriesHTML(state.sim.similarCountries(sim.iso, W(), 8)); return; }
+  const preset = presetNames(state.M).includes(state.preset) ? state.preset : "Поровну";
+  if (sim.act === "simcountry") { if ($("simCountryBox")) $("simCountryBox").innerHTML = `<h2 style="margin:4px 0">Похожие страны · веса «${esc(preset)}» из «Рейтинга»</h2><p class="small muted">Процент — сходство стран по мировым показателям: цены, медпомощь, безопасность, воздух, свободы. Что важнее — по весам из «Рейтинга».</p>` + similarCountriesHTML(state.sim.similarCountries(sim.iso, W(), 8)); return; }
   let x, boxId;
   if (sim.act === "simcity") { const c = sim.city; x = { cc: c.cc, city: c, lat: c.lat, lon: c.lon }; state.simCandidate = { type: "city", id: c.id }; boxId = "simCityBox"; }
   else { const p = state.M.PLACE[sim.id]; if (!p) return; const city = Wd.placeCity(p); x = { cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon }; state.simCandidate = { type: "place", id: p.id }; boxId = "simPlaceBox"; }
   const sp = state.sim.similarSplit(x, W(), { home: 3, abroad: 6 });
-  const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(state.preset)}»</h2>` + similarSplitHTML(sp, x.cc) + `<div class="btns" style="margin-top:8px"><button type="button" class="btn ghost small" data-act="simshow">Показать все на карте</button></div>`;
+  const html = `<h2 style="margin:4px 0">Похожие · веса «${esc(preset)}» из «Рейтинга»</h2><p class="small muted">Процент — сходство: климат по месяцам, размер города, аэропорт, часовой пояс и данные страны. Что важнее — по весам из «Рейтинга».</p>` + similarSplitHTML(sp, x.cc) + `<div class="btns" style="margin-top:8px"><button type="button" class="btn ghost small" data-act="simshow">Показать все на карте</button></div>`;
   if ($(boxId)) $(boxId).innerHTML = html;
 }
 
@@ -1306,7 +1434,7 @@ async function boot() {
   rebuild();
   state.data.addEventListener("change", () => {
     const d = state.data;
-    if (d.flushed) { toast("Отправлено из очереди: " + d.flushed); savedNow("sent"); d.flushed = 0; }
+    if (d.flushed || d.clashed) { toast([d.flushed ? "Отправлено из очереди: " + d.flushed : "", d.clashed ? `Не отправлено: ${d.clashed} — это уже поправили на другом устройстве. ${state.route.name === "map" ? "Нажмите «Не отправлено» вверху" : "Что делать — в красной плашке"}` : ""].filter(Boolean).join(". ")); if (d.flushed) savedNow("sent"); d.flushed = 0; d.clashed = 0; }
     rebuild();
     if (state.route.name === "rate") { renderSync(); if (state.form) state.form.setPlaces(state.M.places); if ($("rateBanner")) $("rateBanner").innerHTML = bannerHTML(); openPendingEdit(); }
     else if (state.dirty && (state.route.name === "place" || state.route.name === "settings")) renderSync();
@@ -1318,7 +1446,7 @@ async function boot() {
     toast("Тема: " + ({ auto: "как в системе", light: "светлая", dark: "тёмная" })[t]);
     if (state.route.name === "settings") rerender(renderSettings);
   });
-  $("syncBtn").addEventListener("click", () => { if (!state.data.hasToken) go("#/settings"); else if (state.route.name === "map" && state.data.status === "live" && state.data.lost.length) go("#/rank"); else state.data.refresh(); });
+  $("syncBtn").addEventListener("click", () => { if (!state.data.hasToken || state.data.status === "auth") go("#/settings"); else if (state.route.name === "map" && state.data.status === "live" && state.data.lost.length) go("#/rank"); else state.data.refresh(); });
   document.addEventListener("click", e => {
     if (e.target.closest("[data-dismiss-notice]")) { state.data.notice = ""; state.data.emit(); return; }
     const rv = e.target.closest("[data-reveal]");
@@ -1328,11 +1456,16 @@ async function boot() {
     const la = e.target.closest("[data-lostapply]");
     if (la) {
       la.closest(".lost").querySelectorAll("button").forEach(b => { b.disabled = true; });
-      state.data.applyLost(Number(la.dataset.lostapply)).then(r => { if (!r) return; savedNow(r); toast(r === "queued" ? "Нет связи: отправится позже" : "Записано поверх"); }).catch(err => { toast(err.code === "clash" ? "Снова изменили на другом устройстве — нажмите «Обновить» и попробуйте ещё раз" : err.message); state.data.emit(); });
+      state.data.applyLost(Number(la.dataset.lostapply)).then(r => { if (!r) return; savedNow(r); toast(r === "queued" ? "Нет связи: отправится позже" : "Записано поверх"); }).catch(err => { toast(err.code === "clash" ? "Снова изменили на другом устройстве — данные обновлены, нажмите «Записать мою» ещё раз" : err.message); state.data.emit(); });
       return;
     }
     const ld = e.target.closest("[data-lostdrop]");
-    if (ld) { state.data.dropLost(Number(ld.dataset.lostdrop)); }
+    if (ld) {
+      if (Number(ld.dataset.armed || 0) > Date.now() - 5000) { state.data.dropLost(Number(ld.dataset.lostdrop)); return; }
+      ld.dataset.armed = Date.now();
+      ld.textContent = "Точно выбросить? Нажмите ещё раз";
+      setTimeout(() => { if (ld.isConnected) { ld.textContent = "Выбросить"; delete ld.dataset.armed; } }, 5000);
+    }
   });
   addEventListener("hashchange", () => route());
   document.addEventListener("click", e => { const a = e.target.closest("a[data-nav]"); if (a && a.getAttribute("href") === location.hash) { e.preventDefault(); route(true); } });

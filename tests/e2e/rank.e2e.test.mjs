@@ -150,7 +150,7 @@ test("a place only my partner rated says her rating is hidden, and revealing it 
   const files = repo({ places: [SPB, place("alfa", "Альфа", { cc: "PRT", country: "Португалия" })], ratings: [rating("v1", "alfa", "Вика", stars(4.5))] });
   await open({ files });
   assert.deepEqual(await mainRows(), []);
-  assert.ok((await rowOf("Альфа")).chips.includes("оценка Вика скрыта до вашей"));
+  assert.ok((await rowOf("Альфа")).chips.includes("оценка Вики скрыта до вашей"));
   await page.tap({ sel: "#rank a.row", text: "Альфа" });
   await page.waitFor(`location.hash === "#/place/alfa"`, 3000, "dossier");
   await page.tap({ text: "Показать всё равно" });
@@ -190,7 +190,7 @@ test("rejected and vetoed places are not ranked but listed under «Отсев» 
   const t = await page.text("#rank");
   assert.match(t, /Отсев: .*Дельта — дорого/);
   assert.match(t, /Эта — без причины/);
-  assert.match(t, /Зета — вето Михаил: шумно/);
+  assert.match(t, /Зета — вето Михаила: шумно/);
   await page.tap({ sel: "#rank .empty-row a", text: "Зета" });
   await page.waitFor(`location.hash === "#/place/zeta"`, 3000, "dossier");
 });
@@ -476,7 +476,7 @@ test("flags list red flags, disagreements and vetoes with a count, most severe f
     { sev: "crit", label: "красный флаг", head: "Зета: Шум ночью у жилья", text: "Михаил ставит 1.0", href: "#/place/zeta" },
     { sev: "serious", label: "разногласие", head: "Каппа: Интернет дома", text: "Михаил 4.5, Вика 2.5", href: "#/place/kappa" },
   ]);
-  assert.equal(await page.eval(`[...document.querySelectorAll("#v-rank .sec-head")].find(h => /флаги/i.test(h.innerText)).querySelector(".muted").innerText`), "3");
+  assert.equal(await page.eval(`[...document.querySelectorAll("#v-rank .sec-head")].find(h => /флаги/i.test(h.innerText)).querySelector(".muted").innerText`), "3 флага");
   await page.tap({ sel: ".flags a", text: "Каппа: Интернет дома" });
   await page.waitFor(`location.hash === "#/place/kappa"`, 3000, "dossier");
 });
@@ -490,7 +490,7 @@ test("flags from places I have not rated are hidden behind a note until I reveal
   const files = repo({ places: [SPB, place("alfa", "Альфа", { cc: "PRT", country: "Португалия" })], ratings: [rating("v1", "alfa", "Вика", { "улица": 1, "шум": 1 })] });
   await open({ files });
   assert.equal(await page.eval(`document.querySelectorAll(".flags .flag").length`), 0);
-  assert.match(await page.text(".flags"), /Ещё 2 — по местам, которые вы сами пока не оценили: скрыты, чтобы не подглядывать\./);
+  assert.match(await page.text(".flags"), /Ещё 2 флага скрыты — по местам, которые вы сами пока не оценили, чтобы не подглядывать\./);
   await page.tap({ sel: "#rank a.row", text: "Альфа" });
   await page.waitFor(`location.hash === "#/place/alfa"`, 3000, "dossier");
   await page.tap({ text: "Показать всё равно" });
@@ -579,7 +579,7 @@ test("names and reasons with markup are shown as plain text on the ranking and i
   });
   await open({ files });
   assert.equal(await page.eval(`document.querySelectorAll("#v-rank img, #v-rank .empty-row b, #v-rank .empty-row i, #v-rank .name b b").length`), 0);
-  assert.equal(await page.eval(`document.querySelector("#rank a.row .name b").innerText`), odd);
+  assert.equal(await page.eval(`document.querySelector('#rank a.row[href="#/place/riga"] .name b').innerText`), odd);
   assert.ok((await heatNames()).includes(odd));
   assert.match(await page.text(".flags"), /<img src=x>Рига "Старая" & Co: Интернет дома/);
   assert.match(await page.text("#rank"), /Отсев <b>жирный<\/b> — <i>курсив<\/i>/);
@@ -607,7 +607,7 @@ test("each place row shows its score, country, status and how many ratings it ha
   assert.match(by["Порту"].score, /^\d\.\d$/);
   assert.deepEqual(by["Порту"].meta, ["Португалия", "кандидат", "оценок: 2", "год здесь: Михаил 7/10 · Вика 6/10"]);
   assert.deepEqual(by["Батуми"].meta, ["Грузия", "кандидат", "только мировые данные"]);
-  assert.deepEqual(by["Тбилиси"].meta, ["Грузия", "кандидат", "оценка Вика скрыта до вашей"]);
+  assert.deepEqual(by["Тбилиси"].meta, ["Грузия", "кандидат", "оценка Вики скрыта до вашей"]);
   assert.equal(by["Санкт-Петербург"].score, "база");
   assert.equal(by["Зета"].meta[1], "вето", "a vetoed place says so instead of «кандидат»");
 });

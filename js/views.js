@@ -1,6 +1,6 @@
-import { fmt, MIN_COVERAGE } from "./calc.js";
-import { esc, heatHex, inkOn, scoreColor } from "./util.js";
-import { CONF, datesRu } from "./form.js";
+import { fmt, MIN_COVERAGE, gen } from "./calc.js";
+import { esc, heatHex, inkOn, scoreColor, plural } from "./util.js";
+import { CONF, datesRu, MODE_LABEL } from "./form.js";
 
 export const SHORT = { legal: "Легализ.", money: "Деньги", work: "Работа", health: "Здоровье", safety: "Безоп.", climate: "Климат", housing: "Жильё", city: "Город", nature: "Природа", people: "Люди", links: "Связь" };
 const pct = v => ((v - 1) / 4 * 100).toFixed(2) + "%";
@@ -10,13 +10,13 @@ const personClass = (M, who) => (who === M.PEOPLE[1] ? "v" : "m");
 const hidden = (M, id, w) => !!(M.hidden && M.hidden(id, w));
 export const hiddenWho = (M, id) => M.PEOPLE.filter(w => hidden(M, id, w));
 export const hasResidents = M => M.places.some(p => p.ext && Object.values(p.ext).some(e => e && e.res != null));
-export const hiddenNote = (M, id) => { const w = hiddenWho(M, id); return w.length ? `оценка ${w.join(", ")} скрыта до вашей` : ""; };
+export const hiddenNote = (M, id) => { const w = hiddenWho(M, id); return w.length === 1 ? `оценка ${gen(w[0])} скрыта до вашей` : w.length ? `оценки ${w.map(gen).join(" и ")} скрыты до вашей` : ""; };
 
 export function yearsLine(M, id) {
   return M.PEOPLE.map(w => { const y = hidden(M, id, w) ? null : M.latestYear(id, w); return y == null ? null : `${w} ${y}/10`; }).filter(Boolean).join(" · ");
 }
 
-export function rankHTML(M, W) {
+export function rankHTML(M, W, moves = {}) {
   const r = M.ranking(W);
   const ticks = [1, 2, 3, 4, 5].map(v => `<span style="left:${pct(v)}">${v === 3 ? "3 · СПб" : v}</span>`).join("");
   let html = `<div class="rank-axis"><span></span><span></span><div class="ticks num">${ticks}</div><span></span></div>`;
@@ -29,18 +29,24 @@ export function rankHTML(M, W) {
     const years = yearsLine(M, row.p.id);
     const share = M.ownShare(row.p.id), note = hiddenNote(M, row.p.id);
     const why = !pale ? "" : note || (share || M.ratingsOf(row.p.id).length ? `своих ответов на ★: ${Math.round(share * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length}` : "только мировые данные");
+    const mv = !pale && moves[row.p.id];
     return `<a class="row${pale ? " pale" : ""}" href="${placeHref(row.p.id)}">
       <span class="pos num">${pale ? "·" : pos}</span>
-      <div class="name"><b>${esc(row.p.name)}</b><div class="chips">${row.p.country ? `<span class="chip">${esc(row.p.country)}</span>` : ""}${why ? `<span class="chip">${esc(why)}</span>` : ""}${rangeChip ? `<span class="chip">${rangeChip}</span>` : ""}${row.t.coverage < 0.7 ? `<span class="chip">заполнено ${Math.round(row.t.coverage * 100)}%</span>` : ""}${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">год здесь: ${esc(years)}</span>` : ""}</div></div>
+      <div class="name"><b>${esc(row.p.name)}</b><div class="chips">${mv ? `<span class="chip move" title="Место сдвинулось после смены весов">${mv > 0 ? "↑" + mv : "↓" + -mv}</span>` : ""}${row.p.country ? `<span class="chip">${esc(row.p.country)}</span>` : ""}${why ? `<span class="chip">${esc(why)}</span>` : ""}${rangeChip ? `<span class="chip">${rangeChip}</span>` : ""}${row.t.coverage < 0.7 ? `<span class="chip">заполнено ${Math.round(row.t.coverage * 100)}%</span>` : ""}${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">год здесь: ${esc(years)}</span>` : ""}</div></div>
       <div class="track"><span class="base"></span><span class="bar ${s >= 3 ? "up" : "down"}" style="left:${pct(lo)};width:calc(${pct(hi)} - ${pct(lo)})" data-tip="Итог: ${fmt(s)}"></span>${people(row)}</div>
       <div class="score num">${fmt(s)}<small>из 5</small></div>
     </a>`;
   };
-  own.forEach((row, i) => { html += rowHTML(row, i + 1, false); });
-  if (!own.length) html += `<div class="empty-row">${r.rated.concat(r.thin).some(row => M.ratingsOf(row.p.id).length) ? "Пока ни одно место не набрало ответов на половину главных вопросов ★: места с нашими оценками — ниже." : "Своих оценок пока нет."} Место попадёт сюда, когда отвечено хотя бы на половину главных вопросов ★.</div>`;
-  r.base.forEach(p => {
-    html += `<a class="row" href="${placeHref(p.id)}"><span class="pos num">—</span><div class="name"><b>${esc(p.name)}</b><div class="chips"><span class="chip solid">база</span></div></div><div class="track"><span class="base"></span></div><div class="score num">3.0<small>по определению</small></div></a>`;
+  const RULE = "Место попадёт сюда, когда отвечено хотя бы на половину главных вопросов ★.";
+  const anyOwn = r.rated.concat(r.thin, r.unrated).some(row => M.ratingsOf(row.p.id).length);
+  if (!own.length) html += `<div class="empty-row">${anyOwn ? "Пока ни одно место не набрало ответов на половину главных вопросов ★ — места с нашими оценками ниже." : M.candidates().length ? `Своих оценок пока нет: <a href="#/rate">оцените первую поездку</a>. ${RULE}` : `Своих оценок пока нет. ${RULE}`}</div>`;
+  const baseRows = () => r.base.forEach(p => {
+    html += `<a class="row" href="${placeHref(p.id)}"><span class="pos num">—</span><div class="name"><b>${esc(p.name)}</b><div class="chips"><span class="chip solid" title="Точка отсчёта: все оценки — относительно СПб">база</span></div></div><div class="track"><span class="base"></span></div><div class="score num">3.0<small>по определению</small></div></a>`;
   });
+  const above = row => Math.round(row.t.score * 10) >= 30;
+  own.forEach((row, i) => { if (above(row)) html += rowHTML(row, i + 1, false); });
+  baseRows();
+  own.forEach((row, i) => { if (!above(row)) html += rowHTML(row, i + 1, false); });
   if (dataOnly.length) {
     html += `<div class="rank-sub">Мало своих оценок — итог в основном по мировым данным</div>`;
     dataOnly.forEach(row => { html += rowHTML(row, 0, true); });
@@ -59,7 +65,9 @@ export function heatHTML(M, W) {
   const rows = M.places.filter(M.isBase).map(p => ({ p })).concat(list);
   let html = `<thead><tr><th>Место</th>${M.GROUPS.map(g => `<th title="${esc(g.name)}">${SHORT[g.key] || esc(g.name)}</th>`).join("")}</tr></thead><tbody>`;
   rows.forEach(({ p }) => {
-    html += `<tr><th class="rowh"><a href="${placeHref(p.id)}">${esc(p.name)}</a></th>`;
+    const thin = !M.isBase(p) && !M.ownEnough(p.id);
+    const tag = !thin ? "" : hiddenNote(M, p.id) || (M.ratingsOf(p.id).length ? "мало своих оценок" : "только мировые данные");
+    html += `<tr${thin ? ` class="pale"` : ""}><th class="rowh"><a href="${placeHref(p.id)}">${esc(p.name)}</a>${tag ? `<small class="muted tag">${esc(tag)}</small>` : ""}</th>`;
     M.GROUPS.forEach(g => {
       const v = M.groupScore(p, g.key, "final"), bg = v == null ? null : heatHex(v);
       html += `<td class="cell${v == null ? " none" : ""}" style="${bg ? `background:${bg};color:${inkOn(bg)}` : ""}" data-tip="${esc(p.name)} · ${esc(g.name)}: ${fmt(v)}">${fmt(v)}</td>`;
@@ -72,11 +80,12 @@ export function heatHTML(M, W) {
 export function flagsHTML(M) {
   const label = { crit: "красный флаг", serious: "разногласие", warn: "иллюзия туриста", info: "недооценили" };
   const shown = M.allFlags(), off = M.full ? Math.max(0, M.full.allFlags().length - shown.length) : 0;
-  const note = off ? `<p class="small muted">Ещё ${off} — по местам, которые вы сами пока не оценили: скрыты, чтобы не подглядывать.</p>` : "";
+  const note = off ? `<p class="small muted">Ещё ${off} ${plural(off, "флаг скрыт", "флага скрыты", "флагов скрыто")} — по местам, которые вы сами пока не оценили, чтобы не подглядывать.</p>` : "";
+  const legend = `<p class="small muted">Красный флаг — чья-то оценка 1.5 и ниже или вето. Разногласие — наши оценки расходятся на 1.5 балла и больше. Иллюзия туриста и «недооценили» — наша оценка и слова живущих расходятся на 1.5 и больше.</p>`;
   return {
     count: shown.length,
     html: shown.length
-      ? shown.map(f => `<div class="flag"><span class="sev ${f.sev}">${label[f.sev]}</span><div class="t"><a href="${placeHref(f.place)}">${esc(f.head)}</a><small>${esc(f.text)}</small></div></div>`).join("") + note
+      ? shown.map(f => `<div class="flag"><span class="sev ${f.sev}">${label[f.sev]}</span><div class="t"><a href="${placeHref(f.place)}">${esc(f.head)}</a><small>${esc(f.text)}</small></div></div>`).join("") + note + legend
       : note || `<p class="small muted">Флагов нет. Здесь появятся оценки ≤1.5, расхождения между нами от 1.5 балла и вето.</p>`,
   };
 }
@@ -134,7 +143,7 @@ export function notesText(M, notes) {
   return Object.keys(notes || {}).filter(k => notes[k]).map(k => `${(M.GROUP[k] && M.GROUP[k].name) || k}: ${notes[k]}`).join("\n");
 }
 
-export function tripsHTML(M, p, editable, me) {
+export function tripsHTML(M, p, editable, me, waiting = new Set()) {
   if (M.isBase(p)) return `<p class="small muted">СПб — точка отсчёта: по бытовым группам 3 по определению. Позже сюда придут данные и отзывы, включая риски варианта «остаться».</p>`;
   const rs = M.ratingsOf(p.id).slice().sort((a, b) => String(b.start || b.updatedAt || "").localeCompare(String(a.start || a.updatedAt || "")));
   const years = M.PEOPLE.map(w => { const y = hidden(M, p.id, w) ? "скрыто" : M.latestYear(p.id, w); return `<span>${esc(w)} <b>${y == null ? "—" : esc(y)}</b>${y == null || y === "скрыто" ? "" : "/10"}</span>`; }).join("");
@@ -145,21 +154,24 @@ export function tripsHTML(M, p, editable, me) {
     const cls = personClass(M, r.who);
     const filled = M.STAR_KEYS.filter(k => r.scores && r.scores[k] != null).length;
     const dates = r.start ? datesRu(r.start, r.end) : "даты не указаны";
-    const facts = [r.days ? r.days + " дн." : "", r.season, r.mode, r.housing, r.retro ? "по памяти" : ""].filter(Boolean).map(esc).join(" · ");
+    const facts = [r.days ? r.days + " дн." : "", r.season ? "сезон: " + r.season : "", MODE_LABEL[r.mode] || r.mode, r.housing, r.retro ? "по памяти" : ""].filter(Boolean).map(esc).join(" · ");
+    const partner = M.PEOPLE.find(w => w !== r.who), blind = me && r.who === me && partner && M.full && !M.full.ratingsOf(p.id).some(x => x.who === partner);
     const notes = [notesText(M, r.notes), r.surprises].filter(Boolean).join("\n\n");
     const mine = !me || r.who === me;
-    html += `<div class="trip" data-rid="${esc(r.id)}"><div class="who"><i class="sw ${cls}"></i>${esc(r.who)}<span class="muted small" style="font-weight:400">· ${esc(dates)}</span></div>
+    html += `<div class="trip" data-rid="${esc(r.id)}"><div class="who"><i class="sw ${cls}"></i>${esc(r.who)}<span class="muted small" style="font-weight:400">· ${esc(dates)}</span>${waiting.has(r.id) ? `<span class="chip warn" title="Сохранена на этом устройстве и отправится, когда появится связь">ждёт отправки</span>` : ""}</div>
       ${facts ? `<div class="small muted">${facts}</div>` : ""}
       ${r.review ? `<div class="review ${cls}">${esc(r.review)}</div>` : ""}
       <div class="small">★ заполнено: <span class="num">${filled} из ${M.STAR_KEYS.length}</span>${r.veto ? ` · <span class="sev crit">вето: ${esc(r.veto)}</span>` : ""}</div>
       ${notes ? `<details><summary class="small">Комментарии</summary><pre>${esc(notes)}</pre></details>` : ""}
+      ${blind ? `<div class="small muted">${esc(partner)} увидит эту оценку, когда оценит место.</div>` : ""}
       ${editable && mine ? `<div><a class="btn ghost small" href="#/rate/${encodeURIComponent(r.id)}">Изменить</a></div>` : ""}</div>`;
   });
+  if (M.PEOPLE.some(w => rs.filter(r => r.who === w).length > 1)) html += `<p class="small muted">Несколько поездок одного человека сводятся в одну оценку: поездки в худший сезон и на удалёнке весят больше, по памяти — меньше.</p>`;
   hiddenWho(M, p.id).forEach(w => { html += `<div class="trip hidden-trip"><div class="small">${esc(w)}: оценка скрыта, пока вы не оцените это место сами, чтобы не подглядывать.</div><button type="button" class="linkbtn small" data-reveal="${esc(p.id)}">Показать всё равно</button></div>`; });
   return html;
 }
 
-export function subtableHTML(M, p, showEmpty) {
+export function subtableHTML(M, p, showEmpty, typed = {}) {
   const res = hasResidents(M);
   let html = `<thead><tr><th>Подкатегория</th><th class="n">Итог</th>${M.PEOPLE.map(w => `<th class="n">${esc(w)}</th>`).join("")}${res ? `<th class="n">Живущие</th>` : ""}<th class="n">Данные</th><th>Флаг</th></tr></thead><tbody>`;
   let any = false;
@@ -173,7 +185,7 @@ export function subtableHTML(M, p, showEmpty) {
       const conf = M.PEOPLE.map(w => M.confOf(p.id, w, c.key));
       const flags = M.catFlags(p, c.key).map(f => `<span class="sev ${f.sev}">${esc(f.short)}</span>`).join(" ");
       const cell = (v, i) => hidden(M, p.id, M.PEOPLE[i]) ? `<td class="n muted" title="скрыто, пока вы не оцените сами">·</td>` : `<td class="n">${fmt(v)}${v != null && conf[i] ? `<span class="c" title="${esc(CONF[conf[i]] || "")}">${esc(conf[i])}</span>` : ""}</td>`;
-      rows.push(`<tr><td>${c.star ? '<span class="star" title="Главный вопрос каждой поездки">★</span> ' : ""}${esc(c.name)}</td><td class="n"><b>${fmt(fin)}</b></td>${per.map(cell).join("")}${res ? `<td class="n">${fmt(rv)}</td>` : ""}<td class="n">${fmt(dat)}</td><td>${flags}</td></tr>`);
+      rows.push(`<tr><td>${c.star ? '<span class="star" title="Главный вопрос каждой поездки">★</span> ' : ""}${esc(c.name)}</td><td class="n"><b>${fmt(fin)}</b></td>${per.map(cell).join("")}${res ? `<td class="n">${fmt(rv)}</td>` : ""}${typed[c.key] && dat != null ? `<td class="n" title="${esc(typed[c.key])}">${fmt(dat)}<span class="c">€</span></td>` : `<td class="n">${fmt(dat)}</td>`}<td>${flags}</td></tr>`);
     });
     if (rows.length) {
       any = true;
@@ -193,9 +205,10 @@ export function placesListHTML(M, W, filter, connected = true) {
   const norm = s => String(s || "").toLowerCase().replace(/ё/g, "е");
   const q = norm(filter).trim();
   const order = { "финалист": 0, "кандидат": 1, "база": 2, "отсев": 3 };
+  const key = p => (p.status !== "база" && M.vetoed(p) ? 3 : order[p.status] ?? 1.5);
   const list = M.places.filter(p => !q || norm(p.name).includes(q) || norm(p.country).includes(q));
-  list.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.name.localeCompare(b.name, "ru"));
-  if (!list.length) return `<p class="pad small muted">${q ? `Ничего не нашлось. Новое место добавляется через <a href="#/map">поиск на карте</a>.` : typeof connected === "string" ? esc(connected) : connected ? "Мест пока нет. Добавьте первое через поиск на карте." : `Места появятся после подключения данных: вставьте ключ в <a href="#/settings">настройках</a>.`}</p>`;
+  list.sort((a, b) => key(a) - key(b) || String(a.name).localeCompare(String(b.name), "ru"));
+  if (!list.length) return `<p class="pad small muted">${q ? `Ничего не нашлось. Новое место добавляется через <a href="#/map">поиск на карте</a>.` : typeof connected === "string" ? esc(connected) : connected ? `Мест пока нет. Добавьте первое через поиск на <a href="#/map">карте</a>.` : `Места появятся после подключения данных: вставьте ключ в <a href="#/settings">настройках</a>.`}</p>`;
   return list.map(p => {
     const t = placeScore(M, p, W);
     const n = M.ratingsOf(p.id).length;

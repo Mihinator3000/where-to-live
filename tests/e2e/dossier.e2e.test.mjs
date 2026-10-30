@@ -200,7 +200,7 @@ test("trip comments and surprises are folded and open on tap; a veto is shown on
 test("a partner's rating stays hidden in year, review, radar and table until revealed, and the reveal is remembered", { skip }, async () => {
   await openDossier("tbilisi");
   assert.match((await page.text(".year")).replace(/\s+/g, " "), /Вика скрыто/);
-  assert.match(await page.text("#v-place .panel.pad"), /оценка Вика скрыта до вашей/);
+  assert.match(await page.text("#v-place .panel.pad"), /Оценка Вики скрыта, пока вы не оцените место сами/);
   assert.match(await page.text(".trips"), /Ваших оценок здесь пока нет/);
   assert.equal(await page.eval(`[...document.querySelectorAll(".radar svg path")].some(p => p.getAttribute("stroke") === "var(--v)")`), false);
   assert.equal(await page.eval(`[...document.querySelectorAll(".subtable td.n")].some(td => td.title.includes("скрыто"))`), true);
@@ -346,7 +346,7 @@ test("numbers typed with spaces, a comma or a euro sign are saved as plain numbe
   assert.equal(f.utilities.v, 1200);
   assert.equal(f.basket.v, 61);
   await page.waitFor(`document.querySelector('#factsForm [name="fact_dinner"]').value === "42.5"`, 4000, "form shows the saved number");
-  assert.match((await factBlock("dinner")).text, /Вписано \d{4}-\d{2}-\d{2}/);
+  assert.match((await factBlock("dinner")).text, /Вписано \d{1,2} [а-яё]+ \d{4}/);
 });
 
 test("water hardness is scored by absolute points, not against SPb", { skip }, async () => {
@@ -534,17 +534,14 @@ test("unsaved text in both forms survives a background sync and is saved on top 
   assert.deepEqual(page.takeErrors(), []);
 });
 
-test("a card another device just changed is saved on the second tap, keeping both changes", { skip }, async () => {
+test("a card another device just changed in another field is saved on the first tap, keeping both changes", { skip }, async () => {
   await openDossier("porto");
   await remoteEdit("porto", { archetype: "мегаполис" });
   await page.fill('#placeForm [name="questions"]', "Мой вопрос");
   await page.tap({ text: "Сохранить карточку" });
-  await page.waitFor(`document.getElementById("placeMsg").innerText`, 6000, "clash message");
-  assert.match(await page.text("#placeMsg"), /изменили на другом устройстве/);
-  assert.equal(await value('#placeForm [name="questions"]'), "Мой вопрос");
-  await page.tap({ text: "Сохранить карточку" });
-  await savedPlace("porto", `p => p.questions === "Мой вопрос"`, "saved on second tap");
+  await savedPlace("porto", `p => p.questions === "Мой вопрос"`, "saved on the first tap");
   assert.equal((await doc("places/porto.json")).archetype, "мегаполис");
+  assert.doesNotMatch(await page.text("#v-place"), /изменили на другом устройстве/);
 });
 
 test("a clash with another device is not reported as a network error", { skip }, async () => {

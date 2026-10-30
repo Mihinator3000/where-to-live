@@ -4,13 +4,16 @@ export const US_SHARE = { "●": 0.7, "◐": 0.5, "○": 0.2 };
 export const MIN_COVERAGE = 0.5;
 export const MIN_OWN = 0.5;
 
+export const GEN = { "Михаил": "Михаила", "Вика": "Вики" };
+export const gen = w => GEN[w] || w;
 export const mean = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
-export const fmt = v => (v == null ? "—" : (Math.round(v * 10) / 10).toFixed(1));
+export const fmt = v => (!Number.isFinite(v) ? "—" : (Math.round(v * 10) / 10).toFixed(1));
 
 export function normalize(groups, w) {
-  const sum = groups.reduce((a, g) => a + (Number(w && w[g.key]) || 0), 0);
+  const val = k => Math.max(0, Number(w && w[k]) || 0);
+  const sum = groups.reduce((a, g) => a + val(g.key), 0);
   const out = {};
-  groups.forEach(g => { out[g.key] = sum ? (Number(w[g.key]) || 0) / sum * 100 : 100 / groups.length; });
+  groups.forEach(g => { out[g.key] = sum ? val(g.key) / sum * 100 : 100 / groups.length; });
   return out;
 }
 
@@ -24,10 +27,13 @@ export function createModel(schema, data, opts = {}) {
   const autoRaw = opts.autoData || (() => null);
   const autoCache = new Map(), groupCache = new Map();
   const autoData = (p, key) => { const k = p.id + "|" + key; if (!autoCache.has(k)) autoCache.set(k, autoRaw(p, key)); return autoCache.get(k); };
-  const num = v => v != null && v !== "" && Number.isFinite(Number(v));
-  const places = (data.places || []).filter(p => !p.deleted);
+  const num = v => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number(v) >= 1 && Number(v) <= 5;
+  const latest = list => { const by = new Map(), rest = []; list.forEach(d => { if (!d.id) { rest.push(d); return; } const o = by.get(d.id); if (!o || String(d.updatedAt || "") >= String(o.updatedAt || "")) by.set(d.id, d); }); return [...by.values()].concat(rest); };
+  const coord = v => (v === null || v === "" || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
+  const tidy = p => { const name = String(p.name == null ? "" : p.name).trim() || `Без названия (${p.id})`, lat = coord(p.lat), lon = coord(p.lon); return name === p.name && lat === p.lat && lon === p.lon ? p : Object.assign({}, p, { name }, lat == null || lon == null ? { lat: null, lon: null } : { lat, lon }); };
+  const places = latest((data.places || []).filter(Boolean)).filter(p => !p.deleted).map(tidy);
   const ids = new Set(places.map(p => p.id));
-  const ratings = (data.ratings || []).filter(r => !r.deleted && r.place && r.who && ids.has(r.place));
+  const ratings = latest((data.ratings || []).filter(Boolean)).filter(r => !r.deleted && r.place && PEOPLE.includes(r.who) && ids.has(r.place));
   const PLACE = Object.fromEntries(places.map(p => [p.id, p]));
   const cache = new Map();
 
@@ -155,7 +161,9 @@ export function createModel(schema, data, opts = {}) {
     if (isBase(p)) return [];
     const out = [];
     const per = PEOPLE.map(w => personCat(p.id, w, key));
-    per.forEach((v, i) => { if (v != null && v <= 1.5) out.push({ sev: "crit", short: "≤1.5", text: `${PEOPLE[i]} ставит ${fmt(v)}` }); });
+    const low = per.map((v, i) => [PEOPLE[i], v]).filter(([, v]) => v != null && v <= 1.5);
+    if (low.length === 1) out.push({ sev: "crit", short: "≤1.5", text: `${low[0][0]} ставит ${fmt(low[0][1])}` });
+    else if (low.length > 1) out.push({ sev: "crit", short: "≤1.5", text: low.every(([, v]) => fmt(v) === fmt(low[0][1])) ? `${low.map(x => x[0]).join(" и ")} ставят ${fmt(low[0][1])}` : low.map(([w, v]) => `${w} ${fmt(v)}`).join(", ") });
     if (per.every(v => v != null) && Math.abs(per[0] - per[1]) >= 1.5) out.push({ sev: "serious", short: "разногласие", text: `${PEOPLE[0]} ${fmt(per[0])}, ${PEOPLE[1]} ${fmt(per[1])}` });
     const us = usCat(p.id, key), res = extCat(p, key, "res");
     if (us != null && res != null) {
@@ -190,7 +198,7 @@ export function createModel(schema, data, opts = {}) {
       base: places.filter(isBase),
       out: places.filter(p => !isBase(p) && (p.status === "отсев" || vetoed(p))).map(p => ({
         p,
-        why: p.status === "отсев" ? (p.reason || "без причины") : ratingsOf(p.id).filter(r => r.veto).map(r => `вето ${r.who}: ${r.veto}`).join("; "),
+        why: p.status === "отсев" ? (p.reason || "без причины") : ratingsOf(p.id).filter(r => r.veto).map(r => `вето ${gen(r.who)}: ${r.veto}`).join("; "),
       })),
     };
   }

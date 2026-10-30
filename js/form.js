@@ -1,20 +1,23 @@
-import { $, esc, local, daysBetween, uid } from "./util.js";
+import { $, esc, local, daysBetween, uid, plural, todayISO } from "./util.js";
 
 const HALF = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 export const CONF = { A: "проверили в быту", B: "видели как туристы", C: "со слов живущих", D: "по сайтам и рейтингам" };
-const MODE_LABEL = { "отпуск": "не работали", "удалёнка": "работали все будни", "смешанно": "работали часть дней" };
+export const MODE_LABEL = { "отпуск": "не работали", "удалёнка": "работали все будни", "смешанно": "работали часть дней" };
 const emptyForm = (who = local.get("me", "")) => ({ id: null, createdAt: null, who, place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", questions: "", scores: {}, conf: {}, notes: {}, draftId: null, stamp: null, _oid: null });
 const keyOf = f => (f.id ? "edit:" + f.id : f.place || "_new");
 const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined, _oid: undefined }));
 const changed = f => !f.id || f._orig !== snap(f);
 const hasContent = f => Object.keys(f.scores).length > 0 || f.year != null || !!(f.start || f.end || f.season || f.mode || f.housing) || !!(f.review.trim() || f.surprises.trim() || f.veto.trim() || (f.questions || "").trim()) || Object.values(f.notes).some(v => v && v.trim());
 const numRu = v => String(v).replace(".", ",");
+const numDot = v => String(v);
 const hintText = h => h.replace(/уверенность ([ABCD])/g, (m, l) => `откуда знаем: «${CONF[l]}»`);
 
 export function datesRu(start, end) {
   const M = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   const p = s => { const [y, m, d] = String(s).split("-").map(Number); return { y, m, d }; };
   if (!start) return "";
+  const ok = s => /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(String(s));
+  if (!ok(start) || (end && !ok(end))) return [start, end].filter(Boolean).join(" – ");
   const a = p(start);
   if (!end || end === start) return `${a.d} ${M[a.m - 1]} ${a.y}`;
   const b = p(end);
@@ -80,18 +83,19 @@ export class RateForm {
     const extra = this.schema.cats.filter(c => c.form && !c.star).length;
     let html = `<h1>Оценить поездку</h1><div id="fTop"></div><div class="panel fcard">
       <h3>Кто и где</h3>
-      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили: пустой ответ лучше догадки.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше. «Лучше» — значит лучше для нас: тише, чище, безопаснее.</span><span>Аренду, цены и жёсткость воды здесь не оцениваем: это цифры места, они вписываются один раз в его карточку.</span></div>
-      <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает" id="fWho">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div></div>
-      <div class="field"><label class="lbl" for="fPlace">Место</label><select id="fPlace"></select><span class="small muted" id="fPlaceHint">Нет в списке — <a href="#/map">найдите на карте</a> и нажмите «Добавить место».</span></div>
+      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили: пустой ответ лучше догадки.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше. «Лучше» — значит лучше для нас: тише, чище, безопаснее.</span><span><b>Откуда знаем</b> — кнопка под ответом. По умолчанию «видели как туристы». Поменяйте на «проверили в быту», если жили этим сами (снимали жильё, ходили к врачу), или на «со слов живущих» / «по сайтам и рейтингам», если сами не видели.</span><span>Аренду, цены и жёсткость воды здесь не оцениваем: это цифры места, они вписываются один раз в его карточку.</span></div>
+      <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает" id="fWho">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div><span class="small muted" id="fWhoNote" hidden></span></div>
+      <div class="field"><label class="lbl" for="fPlace">Место</label><select id="fPlace"></select><span class="small muted" id="fPlaceHint">Нет в списке — <a href="#/map">найдите на карте</a>, откройте карточку и нажмите «Добавить как место».</span></div>
       <div class="frow">
         <label class="field" for="fStart"><span class="lbl">Приехали</span><input type="date" id="fStart"></label>
         <label class="field" for="fEnd"><span class="lbl">Уехали</span><input type="date" id="fEnd"></label>
       </div>
-      <div class="field"><span class="lbl">Сезон</span><div class="seg" role="group" aria-label="Сезон">${seg("season", O.season)}</div><span class="small muted">«Худший» — самое неудобное время для этого места (для курорта — зима, для юга — разгар лета). Такая поездка весит вдвое, межсезон — в полтора раза.</span></div>
+      <div class="field"><span class="lbl">Сезон</span><div class="seg" role="group" aria-label="Сезон">${seg("season", O.season)}</div><span class="small muted">Пик — когда туда едут все (для моря — лето). Худший — самое неудобное время для этого места (для курорта — зима, для юга — разгар лета). Межсезон — между ними. Поездка в худший сезон весит вдвое, в межсезон — в полтора раза: так виднее обычная жизнь.</span></div>
       <div class="field"><span class="lbl">Работали из поездки?</span><div class="seg" role="group" aria-label="Работали из поездки">${seg("mode", O.mode, v => MODE_LABEL[v] || v)}</div><span class="small muted">Рабочие будни показывают обычную жизнь, поэтому такая поездка весит больше.</span></div>
-      <div class="field"><span class="lbl">Где жили</span><div class="seg" role="group" aria-label="Где жили">${seg("housing", O.housing)}</div></div>
+      <div class="field"><span class="lbl">Где жили</span><div class="seg" role="group" aria-label="Где жили">${seg("housing", O.housing)}</div><span class="small muted">Жилой район — где живут местные; центр — исторический центр и главные улицы; туристическая зона — набережная, отели, курортные кварталы. Помогает понять, откуда шум, цены и пустые улицы зимой.</span></div>
       <label class="toggle" for="fRetro"><input type="checkbox" id="fRetro"> По памяти: поездка закончилась больше месяца назад (такая оценка весит меньше)</label>
       <label class="toggle" for="fOnlyStar"><input type="checkbox" id="fOnlyStar"> Только главные вопросы ★ (${this.STAR_KEYS.length})</label>
+      <span class="small muted">Остальные вопросы — по желанию: отвечайте, если было что проверить.</span>
     </div>`;
     this.GROUPS.forEach(({ g, cats }) => {
       html += `<div class="panel fcard" data-group="${g.key}"><h3>${esc(g.name)} <span class="gcount" id="gc-${g.key}"></span></h3><div>`;
@@ -107,15 +111,15 @@ export class RateForm {
           <div class="conf-pick" data-confpick="${c.key}" role="group" aria-label="Откуда знаем" hidden>${Object.keys(CONF).map(l => `<button type="button" data-confset="${c.key}" data-l="${l}" aria-pressed="false">${CONF[l]}</button>`).join("")}</div>
         </div>`;
       });
-      html += `</div><button type="button" class="linkbtn small addnote" data-addnote="${g.key}">+ комментарий к группе</button><label class="field" for="note-${g.key}" data-notebox="${g.key}" hidden><span class="lbl">Комментарий: что видели, почему такие баллы</span><textarea id="note-${g.key}" data-note="${g.key}" rows="2"></textarea></label></div>`;
+      html += `</div><button type="button" class="linkbtn small addnote" data-addnote="${g.key}">+ комментарий: ${esc(g.name)}</button><label class="field" for="note-${g.key}" data-notebox="${g.key}" hidden><span class="lbl">Комментарий: что видели, почему такие баллы</span><textarea id="note-${g.key}" data-note="${g.key}" rows="2"></textarea></label></div>`;
     });
-    html += `<button type="button" class="btn ghost wide" id="fShowAll" hidden>Показать остальные вопросы (ещё ${extra})</button>
-    <div class="panel fcard"><h3>Итог</h3>
+    html += `<button type="button" class="btn ghost wide" id="fShowAll" hidden>Показать остальные вопросы (ещё ${extra}, по желанию)</button>
+    <div class="panel fcard"><h3>В целом</h3>
       <div class="field"><span class="lbl">Прожили бы здесь год? Отдельная шкала 0–10: 0 — ни за что, 10 — хоть завтра</span><div class="pick y" role="group" aria-label="Год здесь">${Array.from({ length: 11 }, (_, i) => `<button type="button" data-year="${i}" aria-pressed="false">${i}</button>`).join("")}</div></div>
-      <label class="field" for="fReview"><span class="lbl">Отзыв в двух-трёх фразах (виден на карте)</span><textarea id="fReview" rows="3"></textarea></label>
+      <label class="field" for="fReview"><span class="lbl">Отзыв в двух-трёх фразах (виден в карточке места; второй из вас увидит его после своей оценки)</span><textarea id="fReview" rows="3"></textarea></label>
       <label class="field" for="fSurprises"><span class="lbl">Сюрпризы: что оказалось не так, как ждали</span><textarea id="fSurprises" rows="2"></textarea></label>
-      <label class="field" for="fQuestions"><span class="lbl">Вопросы к следующей поездке (допишутся в карточку места)</span><textarea id="fQuestions" rows="2"></textarea></label>
-      <label class="field" for="fVeto"><span class="lbl">Вето: место отпадает совсем, потому что…</span><input type="text" id="fVeto" autocomplete="off" placeholder="оставьте пустым, если вето нет"></label>
+      <label class="field" for="fQuestions"><span class="lbl">Вопросы к следующей поездке (допишутся в карточку места и сразу видны обоим)</span><textarea id="fQuestions" rows="2"></textarea><span class="small muted" id="fQuestionsNow" hidden></span></label>
+      <label class="field" for="fVeto"><span class="lbl">Вето: место убирается из рейтинга для обоих, потому что…</span><input type="text" id="fVeto" autocomplete="off" placeholder="оставьте пустым, если вето нет"></label>
     </div>
     <div class="panel fcard"><div class="btns">
       <button type="button" class="btn ghost" id="fReset">Очистить форму</button>
@@ -123,7 +127,7 @@ export class RateForm {
       <button type="button" class="btn danger" id="fDelete" hidden>Удалить оценку</button>
     </div></div>
     <div class="savebar">
-      <span class="counts" id="fCounts"></span>
+      <span class="counts" id="fCounts" aria-live="off"></span>
       <span class="msg" id="fMsg" role="status"></span>
       <span class="msg" id="fNoKey" hidden>Сохранять можно после того, как <a href="#/settings">подключите данные в настройках</a>.</span>
       <button type="submit" class="btn" id="fSave">Сохранить</button>
@@ -172,7 +176,7 @@ export class RateForm {
     }
     if (b.dataset.editrating) { this.hooks.edit(b.dataset.editrating); return; }
     this.msg("");
-    if (b.dataset.who) f.who = b.dataset.who;
+    if (b.dataset.who) { if (f.id) return; f.who = b.dataset.who; }
     else if (b.dataset.opt) f[b.dataset.opt] = f[b.dataset.opt] === b.dataset.val ? "" : b.dataset.val;
     else if (b.dataset.score) {
       const k = b.dataset.score, v = Number(b.dataset.v);
@@ -206,7 +210,7 @@ export class RateForm {
     if (t.dataset.note) f.notes[t.dataset.note] = t.value;
     else if (t.id === "fPlace") { if (e.type !== "change") return; this.pickPlace(t.value); }
     else if (t.id === "fStart") f.start = t.value;
-    else if (t.id === "fEnd") { f.end = t.value; if (f.end) f.retro = (Date.now() - new Date(f.end).getTime()) / 864e5 > 31; }
+    else if (t.id === "fEnd") { f.end = t.value; if (f.end) { const ref = f.id && f.createdAt ? Date.parse(f.createdAt) : Date.now(); f.retro = (ref - new Date(f.end).getTime()) / 864e5 > 31; } }
     else if (t.id === "fRetro") f.retro = t.checked;
     else if (t.id === "fVeto") f.veto = t.value;
     else if (t.id === "fReview") f.review = t.value;
@@ -221,14 +225,17 @@ export class RateForm {
   setPlaces(places) {
     this.places = places.filter(p => p.status !== "база");
     const sel = $("fPlace");
-    const opts = this.places.slice().sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    const opts = this.places.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
     sel.innerHTML = `<option value="">— выберите —</option>` + opts.map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.country ? " · " + esc(p.country) : ""}</option>`).join("");
     sel.value = this.form.place;
+    const note = !this.places.length && this.hooks.emptyNote ? this.hooks.emptyNote() : true;
+    $("fPlaceHint").innerHTML = note === true ? `Нет в списке — <a href="#/map">найдите на карте</a>, откройте карточку и нажмите «Добавить как место».` : note ? esc(note) : `Места появятся после подключения данных: вставьте ключ в <a href="#/settings">настройках</a>.`;
     this.sync();
   }
 
   startFor(placeId) {
     if (!this.form.id && this.form.place === placeId) return this.setPlaces(this.places);
+    if (!this.form.id && !this.form.place && hasContent(this.form) && !this.drafts[placeId]) { this.form.place = placeId; this.persist(); return this.setPlaces(this.places); }
     this.switchTo(this.drafts[placeId] || Object.assign(emptyForm(this.form.who), { place: placeId }));
   }
 
@@ -261,8 +268,8 @@ export class RateForm {
     const f = this.form, H = this.hooks;
     let html = "";
     const others = Object.keys(this.drafts).filter(k => this.drafts[k] !== f && hasContent(this.drafts[k]));
-    if (others.length) html += `<div class="banner drafts"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; const armed = this.armed === "drop:" + k; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n})` : ""}</button><button type="button" class="chipx${armed ? " armed" : ""}" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик">${armed ? "Выбросить?" : "×"}</button></span>`; }).join("")}</div>`;
-    if (f.id) html += `<div class="edit-head"><span>Правка оценки: <b>${esc(H.placeName(f.place) || "?")}</b> · ${esc(f.who)}${f.start ? " · " + esc(datesRu(f.start, f.end)) : ""}</span><button type="button" class="btn ghost small" id="fNew">Новая оценка</button></div>`;
+    if (others.length) html += `<div class="banner drafts"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; const armed = this.armed === "drop:" + k; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n} ${plural(n, "ответ", "ответа", "ответов")})` : ""}</button><button type="button" class="chipx${armed ? " armed" : ""}" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик">${armed ? "Выбросить?" : "×"}</button></span>`; }).join("")}</div>`;
+    if (f.id) html += `<div class="edit-head"><span>Правка оценки: <b>${esc(H.placeName(f.place) || "место удалено из данных")}</b> · ${esc(f.who)}${f.start ? " · " + esc(datesRu(f.start, f.end)) : ""}</span><button type="button" class="btn ghost small" id="fNew">Новая оценка</button></div>${H.placeName(f.place) ? "" : `<div class="banner err">Места этой оценки больше нет в данных, поэтому её нельзя пересохранить — только удалить.</div>`}`;
     else if (f.place && f.who) {
       const mine = H.myRating(f.place, f.who);
       if (mine) html += `<div class="banner">У вас уже есть оценка этого места${mine.start ? " за " + esc(datesRu(mine.start, mine.end)) : ""}. Если это новая поездка, заполняйте дальше. Если та же — <button type="button" class="linkbtn" data-editrating="${esc(mine.id)}">исправьте прежнюю</button>.</div>`;
@@ -274,10 +281,16 @@ export class RateForm {
     const el = this.el, f = this.form;
     const setVal = (id, v) => { const x = $(id); if (x && x.value !== v) x.value = v; };
     $("fTop").innerHTML = this.topHTML();
-    el.querySelectorAll("[data-who]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.who === f.who)));
+    el.querySelectorAll("[data-who]").forEach(b => { b.setAttribute("aria-pressed", String(b.dataset.who === f.who)); b.disabled = !!f.id; });
+    const me = local.get("me", ""), wn = $("fWhoNote");
+    wn.textContent = f.id ? "Автора правки не меняют. Если оценку записали не на того — удалите её и оцените заново." : me && f.who && f.who !== me ? `Оценка запишется на имя «${f.who}», хотя на этом устройстве оценивает ${me}. Если оцениваете за себя — нажмите своё имя.` : "";
+    wn.hidden = !wn.textContent;
+    const qn = $("fQuestionsNow"), qs = f.place && this.hooks.placeQuestions ? this.hooks.placeQuestions(f.place) : "";
+    qn.textContent = qs ? "Уже в карточке: " + qs : "";
+    qn.hidden = !qs;
     el.querySelectorAll("[data-opt]").forEach(b => b.setAttribute("aria-pressed", String(f[b.dataset.opt] === b.dataset.val)));
     el.querySelectorAll("[data-score]").forEach(b => b.setAttribute("aria-pressed", String(f.scores[b.dataset.score] === Number(b.dataset.v))));
-    el.querySelectorAll("[data-qval]").forEach(s => { const v = f.scores[s.dataset.qval]; s.textContent = v == null ? "" : numRu(v); });
+    el.querySelectorAll("[data-qval]").forEach(s => { const v = f.scores[s.dataset.qval]; s.textContent = v == null ? "" : numDot(v); });
     el.querySelectorAll("[data-conf]").forEach(b => {
       const k = b.dataset.conf, l = f.conf[k] || "B";
       b.style.visibility = f.scores[k] == null ? "hidden" : "visible";
@@ -306,19 +319,21 @@ export class RateForm {
     $("fPlaceHint").hidden = !!f.id;
     setVal("fStart", f.start || ""); setVal("fEnd", f.end || "");
     $("fEnd").min = f.start || "";
+    $("fStart").max = todayISO();
     $("fRetro").checked = !!f.retro; $("fOnlyStar").checked = this.onlyStar;
     setVal("fVeto", f.veto); setVal("fReview", f.review); setVal("fSurprises", f.surprises); setVal("fQuestions", f.questions || "");
     const n = Object.keys(f.scores).length;
     const stars = this.STAR_KEYS.filter(k => f.scores[k] != null).length;
-    $("fCounts").textContent = `★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · ещё ${n - stars}` : ""}`;
+    $("fCounts").textContent = `главные ★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · ещё ${n - stars}` : ""}`;
+    $("fCounts").title = `Ответов на главные ★ вопросы: ${stars} из ${this.STAR_KEYS.length}. В рейтинг место попадает, когда на половину из них ответил кто-то из вас`;
     $("fReset").textContent = this.armed === "reset" ? "Точно стереть все ответы?" : "Очистить форму";
     $("fReset").classList.toggle("danger", this.armed === "reset");
     $("fCancel").hidden = !f.id;
     const del = $("fDelete");
     del.hidden = !f.id;
     del.textContent = this.armed === "delete" ? "Точно удалить?" : "Удалить оценку";
-    const canWrite = this.hooks.canWrite();
-    $("fSave").disabled = this.saving || !canWrite;
+    const canWrite = this.hooks.canWrite(), orphan = !!f.id && !this.hooks.placeName(f.place);
+    $("fSave").disabled = this.saving || !canWrite || orphan;
     $("fSave").textContent = this.saving ? "Сохраняю…" : f.id ? "Сохранить правку" : "Сохранить";
     $("fSave").title = canWrite ? "" : "Сначала подключите данные в настройках";
     $("fNoKey").hidden = canWrite;
@@ -337,7 +352,8 @@ export class RateForm {
     if (!f.who) return this.fail("Выберите, кто оценивает.", $("fWho"));
     if (!f.place || !this.places.some(p => p.id === f.place)) return this.fail("Выберите место.", $("fPlace"));
     if (f.start && f.end && f.end < f.start) return this.fail("«Уехали» раньше, чем «Приехали».", $("fEnd"));
-    if (!Object.keys(f.scores).length && f.year == null && !f.review.trim() && !f.veto.trim()) return this.fail("Поставьте хотя бы одну оценку.");
+    if (f.start && f.start > todayISO()) return this.fail("«Приехали» позже сегодняшнего дня — проверьте год.", $("fStart"));
+    if (!Object.keys(f.scores).length && f.year == null && !f.review.trim() && !f.veto.trim()) return this.fail("Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.");
     const conf = {};
     Object.keys(f.conf).forEach(k => { if (f.scores[k] != null && f.conf[k] !== "B") conf[k] = f.conf[k]; });
     const notes = {};
@@ -345,6 +361,7 @@ export class RateForm {
     const isNew = !f.id;
     if (isNew && !f.draftId) f.draftId = uid("r");
     if (!f.stamp) f.stamp = new Date().toISOString();
+    this.persist();
     const body = {
       id: f.id || f.draftId, place: f.place, who: f.who, start: f.start || null, end: f.end || null, days: daysBetween(f.start, f.end),
       season: f.season, mode: f.mode, housing: f.housing, retro: !!f.retro, year: f.year,
@@ -361,8 +378,16 @@ export class RateForm {
       this.saving = false; this.sync();
       this.hooks.saved(res, body.place);
     } catch (err) {
-      this.saving = false; this.sync();
-      this.msg(err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Ваши правки остались в форме: откройте оценку заново из досье и перенесите их." : err.message || "Не сохранилось", true);
+      this.saving = false;
+      const gone = err.code === "clash" && f.id && this.hooks.isDeleted && this.hooks.isDeleted(f.id);
+      if (gone) { f.id = null; f._oid = null; f._orig = undefined; f.createdAt = null; f.draftId = null; f.stamp = null; this.persist(); }
+      this.sync();
+      const text = gone ? "Эту оценку удалили на другом устройстве. Ваши ответы остались в форме: нажмите «Сохранить», чтобы записать их как новую оценку, или «Очистить форму»."
+        : err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Ваши правки остались в форме: откройте оценку заново из досье и перенесите их."
+        : err.code === "http" || err.code === "limit" ? `${err.message}: похоже, сбой на стороне GitHub. Оценка не сохранена, ответы остались в форме — нажмите «Сохранить» ещё раз через минуту.`
+        : err.message || "Не сохранилось";
+      this.msg(text, true);
+      if (this.hooks.failed) this.hooks.failed(err, text);
     }
   }
 

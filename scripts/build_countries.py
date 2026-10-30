@@ -27,7 +27,7 @@ PASSPORT = "https://raw.githubusercontent.com/imorte/passport-index-data/main"
 ISO_FIX = {"XKX": "KOS", "OWID_KOS": "KOS", "OWID_CYN": "CYN"}
 
 WB_LIC = "CC BY 4.0"
-WGI_LIC = "WGI (World Bank), с атрибуцией"
+WGI_LIC = "WGI, с атрибуцией World Bank"
 INFORM_URL = "https://drmkc.jrc.ec.europa.eu/inform-index"
 USD_SPAN = 5
 EURO_SWITCH = {"HRV": (2023, 7.5345), "BGR": (2026, 1.95583)}  # WB keeps pre-euro LCU per USD unconverted
@@ -49,11 +49,11 @@ IND = [
          unit="", fmt=1, dir=-1, scale={"type": "log", "step": 0.693}, source="World Bank WDI (UNODC)",
          code="VC.IHR.PSRC.P5", cats=["преступность"],
          note="убийства — единственная сопоставимая цифра; бытовую преступность не отражает"),
-    dict(key="wgi_pv", name="Политическая стабильность (WGI)", short="Стабильн.", group="safety", unit="", fmt=2, dir=1,
+    dict(key="wgi_pv", name="Политическая стабильность (WGI, от −2,5 до +2,5)", short="Стабильн.", group="safety", unit="", fmt=2, dir=1,
          scale={"type": "lin", "step": 0.5}, source="World Bank WGI", code="GOV_WGI_PV.EST", cats=["стабильность"]),
-    dict(key="quake", name="Землетрясения (INFORM, по стране)", short="Землетряс.", group="safety", unit="", fmt=1,
+    dict(key="quake", name="Землетрясения (INFORM, риск 0–10, по стране)", short="Землетряс.", group="safety", unit="", fmt=1,
          dir=-1, scale={"type": "abs", "points": [[0, 3], [3, 2.75], [5, 2.25], [7, 1.75], [9, 1.25]]},
-         source="INFORM Risk (EC JRC)", code="HA.NAT.EQ", license="CC BY (по HDX)", url=INFORM_URL, cats=["стихии"],
+         source="INFORM Risk (EC JRC)", code="HA.NAT.EQ", license="CC BY, по данным HDX", url=INFORM_URL, cats=["стихии"],
          note="по стране в целом; у СПб почти нулевой риск"),
     dict(key="wgi_cc", name="Контроль коррупции (WGI, 0–100)", short="Коррупция", group="legal", unit="", fmt=0, dir=1,
          scale={"type": "abs", "points": [[0, 1], [100, 5]]}, source="World Bank WGI", code="GOV_WGI_CC.SC",
@@ -62,13 +62,13 @@ IND = [
          dir=1, scale={"type": "abs", "points": [[0, 1], [100, 5]]}, source="World Bank WGI", code="GOV_WGI_GE.SC",
          cats=["бюрократия"], note="качество госуправления в целом"),
     dict(key="free_speech", name="Свобода слова (V-Dem, 0–1)", short="Свобода слова", group="people", unit="", fmt=2,
-         dir=1, scale={"type": "lin", "step": 0.38}, source="V-Dem via Our World in Data",
+         dir=1, scale={"type": "lin", "step": 0.38}, source="V-Dem через Our World in Data",
          code="freedom-of-expression-index", license="CC BY 4.0",
          url="https://ourworldindata.org/grapher/freedom-of-expression-index", cats=["свободы"]),
     dict(key="ru_visa", name="Безвиз для паспорта РФ", short="Безвиз РФ", group="legal", unit="дн.", fmt=0, dir=1,
          scale={"type": "abs", "points": [[0, 1], [30, 3], [90, 4], [180, 5]]}, source="passport-index-data",
          code="RUS → страна", license="MIT", url="https://github.com/imorte/passport-index-data", cats=[],
-         note="0 — нужна виза или e-visa; третий элемент — режим въезда"),
+         note="сколько дней можно жить без визы; 0 — нужна виза или e-visa"),
 ]
 WB_N = {"homicide": 5}
 for i in IND:

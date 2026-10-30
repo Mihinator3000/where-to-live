@@ -187,7 +187,7 @@ test("a valid key pasted with spaces is trimmed, checked, saved and loads our da
   assert.equal(await syncText(), "Не подключено");
   assert.equal(await page.visible("#forget"), false);
   await submitToken("  github_pat_TEST_fresh  ");
-  assert.match(await page.text("#tokenMsg"), /Подключено: мест 6, оценок 4/);
+  assert.match(await page.text("#tokenMsg"), /Подключено: мест 5 и СПб, оценок 4/);
   assert.match(await toastText(/Подключено/), /данные загружены/);
   assert.equal(await stored("token"), "github_pat_TEST_fresh");
   assert.equal(await tokenField(), "", "the key is not left in the field");
@@ -227,7 +227,7 @@ test("pressing «Сохранить и проверить» with an empty field 
   assert.match(await page.text("#tokenMsg"), /оценок 4/);
   await editRemote("ratings/r9.json", vikaRating("r9"));
   await submitToken(null);
-  assert.match(await page.text("#tokenMsg"), /Подключено: мест 6, оценок 5/);
+  assert.match(await page.text("#tokenMsg"), /Подключено: мест 5 и СПб, оценок 5/);
   assert.equal(await stored("token"), "github_pat_TEST_e2e");
 });
 
@@ -311,7 +311,7 @@ test("forgetting the key disconnects the device and removes the cached data", { 
   await openApp(page, srv.url, { hash: "#/settings" });
   await page.tap({ sel: "#forget" });
   await page.tap({ sel: "#forget" });
-  assert.match(await toastText(/Ключ и кэш удалены/), /с этого устройства/);
+  assert.match(await toastText(/Ключ и данные удалены/), /с этого устройства/);
   assert.equal(await stored("token"), null);
   assert.equal(await stored("cache"), null);
   assert.equal(await syncText(), "Не подключено");
@@ -334,7 +334,7 @@ test("replacing the key with «Забыть ключ» keeps a half-filled ratin
   await go("#/settings");
   await page.tap({ sel: "#forget" });
   await page.tap({ sel: "#forget" });
-  await toastText(/Ключ и кэш удалены/);
+  await toastText(/Ключ и данные удалены/);
   await reload();
   await submitToken("github_pat_TEST_replacement");
   assert.match(await page.text("#tokenMsg"), /Подключено/);
@@ -349,7 +349,7 @@ test("changes queued offline survive forgetting the key and are sent once a new 
   await go("#/settings");
   await page.tap({ sel: "#forget" });
   await page.tap({ sel: "#forget" });
-  assert.match(await toastText(/Ключ и кэш удалены/), /Неотправленные правки \(1\) уйдут после нового ключа/);
+  assert.match(await toastText(/Ключ и данные удалены/), /Неотправленные правки \(1\) уйдут после нового ключа/);
   await page.eval(`localStorage.removeItem("mock:offline")`);
   await submitToken("github_pat_TEST_again");
   await page.waitFor(`JSON.parse(localStorage.getItem("wtl:pending") || "[]").length === 0`, 6000, "queue sent");
@@ -523,10 +523,10 @@ test("opening the app offline shows the cached data and says so", { skip }, asyn
   await openApp(page, srv.url, { hash: "#/rank" });
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await reload();
-  assert.equal(await syncText(), "Офлайн · показан кэш");
+  assert.equal(await syncText(), "Офлайн");
   const t = await page.text("#v-rank");
   assert.match(t, /Порту/);
-  assert.match(await page.text("#v-rank .banner.err"), /Нет связи/);
+  assert.match(await page.text("#v-rank .banner"), /Нет связи/);
 });
 
 test("the very first start offline does not claim that a cache is shown", { skip }, async () => {
@@ -575,8 +575,7 @@ test("an edit that clashes with another device is not reported as a connection e
   await editRemote("places/porto.json", Object.assign({}, porto, { questions: "Вопрос с ноутбука" }));
   await page.fill('#placeForm [name="archetype"]', "город у океана");
   await page.tap({ text: "Сохранить карточку" });
-  await page.waitFor(`document.getElementById("placeMsg").innerText.trim() !== ""`, 6000, "save result");
-  assert.match(await page.text("#placeMsg"), /изменили на другом устройстве/);
+  await page.waitFor(`JSON.parse(JSON.parse(localStorage.getItem("mock:files"))["places/porto.json"]).archetype === "город у океана"`, 6000, "saved");
   assert.notEqual(await syncText(), "Ошибка связи", "the network is fine, only the card changed elsewhere");
   assert.notEqual(await syncDot(), "dot err");
 });
@@ -584,7 +583,7 @@ test("an edit that clashes with another device is not reported as a connection e
 test("saving the card again after a clash writes my field over and keeps the other device's change", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/place/porto" });
   const porto = await remoteDoc("places/porto.json");
-  await editRemote("places/porto.json", Object.assign({}, porto, { questions: "Вопрос с ноутбука" }));
+  await editRemote("places/porto.json", Object.assign({}, porto, { questions: "Вопрос с ноутбука", archetype: "мегаполис" }));
   await page.fill('#placeForm [name="archetype"]', "город у океана");
   await page.tap({ text: "Сохранить карточку" });
   await page.waitFor(`/изменили на другом устройстве/.test(document.getElementById("placeMsg").innerText)`, 6000, "clash message");
@@ -638,7 +637,7 @@ test("a queued card edit that clashes lands in «Не отправлено» and
   await page.waitFor(`document.querySelector("#v-rank .lost")`, 3000, "lost row");
   const banner = await page.text("#v-rank .banner.err");
   assert.match(banner, /Не отправлено: это же изменили на другом устройстве/);
-  assert.match(banner, /Карточка «Порту»: Мой вопрос с телефона/);
+  assert.match(banner, /Порту · Вопросы: «Мой вопрос с телефона»/);
   await page.tap({ text: "Записать мою", within: "#v-rank .lost" });
   assert.match(await toastText(/Записано поверх/), /Записано поверх/);
   assert.equal(await lostCount(), 0);
@@ -662,6 +661,7 @@ test("«Выбросить» drops my clashed rating and keeps the other device'
   await page.waitFor(`document.querySelector("#v-rank .lost")`, 6000, "lost row");
   assert.match(await page.text("#v-rank .lost"), /Оценка: Порту · Михаил/);
   await page.tap({ text: "Выбросить", within: "#v-rank .lost" });
+  await page.tap({ text: "Точно выбросить", within: "#v-rank .lost" });
   await page.waitFor(`!document.querySelector("#v-rank .lost")`, 3000, "row gone");
   assert.equal(await lostCount(), 0);
   const now = await remoteDoc("ratings/r1.json");
