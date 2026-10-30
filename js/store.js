@@ -5,6 +5,12 @@ export class StoreError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
+const WAIT = 15000;
+const BAD = "GitHub прислал непонятный ответ — возможно, Wi-Fi просит войти на странице сети";
+const DOWN = "GitHub временно не отвечает";
+const hhmm = sec => new Date(sec * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+const body = async res => { let b; try { b = await res.json(); } catch (e) { throw new StoreError("http", BAD); } if (!b || typeof b !== "object") throw new StoreError("http", BAD); return b; };
+
 function b64(text) {
   const bytes = new TextEncoder().encode(text);
   let bin = "";
@@ -51,43 +57,53 @@ export class GitHubStore {
   }
 
   async call(method, path, body, extra = {}) {
-    let res;
+    let res, timer;
+    const ctl = typeof AbortController === "function" ? new AbortController() : null;
     try {
-      res = await this.fetch(API + path, {
-        method,
-        cache: "no-cache",
-        headers: Object.assign({ Authorization: "Bearer " + this.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, body ? { "Content-Type": "application/json" } : {}, extra),
-        body: body ? JSON.stringify(body) : undefined,
-      });
+      res = await Promise.race([
+        this.fetch(API + path, {
+          method,
+          cache: "no-cache",
+          headers: Object.assign({ Authorization: "Bearer " + this.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, body ? { "Content-Type": "application/json" } : {}, extra),
+          body: body ? JSON.stringify(body) : undefined,
+          signal: ctl ? ctl.signal : undefined,
+        }),
+        new Promise((_, no) => { timer = setTimeout(() => { if (ctl) ctl.abort(); no(new StoreError("timeout", `GitHub не ответил за ${WAIT / 1000} секунд`)); }, WAIT); }),
+      ]);
     } catch (e) {
-      throw new StoreError("offline", "Нет связи с GitHub");
-    }
+      throw e instanceof StoreError ? e : new StoreError("offline", "Нет связи с GitHub");
+    } finally { clearTimeout(timer); }
     if (res.status === 401) throw new StoreError("auth", "Ключ доступа не подходит или истёк");
-    if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) throw new StoreError("limit", "GitHub ограничил запросы, попробуйте через минуту");
+    if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) {
+      const reset = Number(res.headers.get("x-ratelimit-reset")), after = Number(res.headers.get("retry-after"));
+      const at = reset > 0 ? reset : after > 0 ? Date.now() / 1000 + after : 0;
+      throw Object.assign(new StoreError("limit", at ? `GitHub временно ограничил запросы — до ${hhmm(at)}` : "GitHub временно ограничил запросы — на несколько минут"), { until: at ? at * 1000 : 0 });
+    }
     return res;
   }
 
   async gql(query, variables) {
     const res = await this.call("POST", "/graphql", { query, variables });
-    if (res.status === 403) throw new StoreError("forbidden", "Ключу доступа не хватает прав");
-    if (!res.ok) throw new StoreError("http", "GitHub ответил " + res.status);
-    const body = await res.json();
-    if (body.errors && body.errors.length) {
-      const m = body.errors.map(e => e.message).join("; ");
-      const types = body.errors.map(e => e.type || "").join(" ");
-      if (/expected.*head|head.*expected|is at .* but expected/i.test(m) || /STALE_DATA/.test(types)) throw new StoreError("conflict", m);
-      if (/FORBIDDEN/.test(types) || /not accessible by/i.test(m)) throw new StoreError("forbidden", m);
+    if (res.status === 403) throw new StoreError("forbidden", "У ключа нет прав на запись");
+    if (!res.ok) throw new StoreError("http", DOWN);
+    const out = await body(res);
+    if (Array.isArray(out.errors) && out.errors.length) {
+      const m = out.errors.map(e => (e && e.message) || "").join("; ");
+      const types = out.errors.map(e => (e && e.type) || "").join(" ");
+      if (/expected.*head|head.*expected|is at .* but expected/i.test(m) || /STALE_DATA/.test(types)) throw new StoreError("conflict", "Данные в эту же секунду изменили с другого устройства");
+      if (/FORBIDDEN/.test(types) || /not accessible by/i.test(m)) throw new StoreError("forbidden", "У ключа нет прав на запись");
       if (/NOT_FOUND/.test(types) || /could not resolve to a repository/i.test(m)) throw new StoreError("access", "Хранилище не найдено или у ключа нет к нему доступа");
-      throw new StoreError("graphql", m);
+      if (typeof console !== "undefined") console.warn("GitHub:", m);
+      throw new StoreError("graphql", DOWN);
     }
-    return body.data;
+    return out.data;
   }
 
   async load() {
     const data = await this.gql(READ, { owner: this.owner, name: this.repo, ref: "refs/heads/" + this.branch });
     const repo = data && data.repository;
     if (!repo) throw new StoreError("access", "Хранилище не найдено или у ключа нет к нему доступа");
-    if (!repo.ref) throw new StoreError("empty", "В репозитории нет ветки " + this.branch);
+    if (!repo.ref || !repo.ref.target || !repo.ref.target.tree) throw new StoreError("empty", "В хранилище нет ветки " + this.branch);
     const out = { places: [], ratings: [], weights: [] };
     const oids = {};
     const bad = [];
@@ -100,6 +116,7 @@ export class GitHubStore {
         if (f.object.isTruncated) { bad.push(path); return; }
         try {
           const doc = JSON.parse(f.object.text);
+          if (!doc || typeof doc !== "object" || Array.isArray(doc)) { bad.push(path); return; }
           doc.id = doc.id || f.name.slice(0, -5);
           out[dir.name].push(doc);
         } catch (e) {
@@ -117,7 +134,7 @@ export class GitHubStore {
   async remoteHead() {
     const res = await this.call("GET", `/repos/${this.owner}/${this.repo}/commits/${this.branch}`, null, Object.assign({ Accept: "application/vnd.github.sha" }, this.etag ? { "If-None-Match": this.etag } : {}));
     if (res.status === 304 && this.etagSha) return this.etagSha;
-    if (!res.ok) throw new StoreError(res.status === 404 ? "access" : "http", "GitHub ответил " + res.status);
+    if (!res.ok) throw new StoreError(res.status === 404 ? "access" : "http", res.status === 404 ? "Хранилище не найдено или у ключа нет к нему доступа" : DOWN);
     const sha = (await res.text()).trim();
     this.etag = res.headers.get("ETag");
     this.etagSha = sha;
@@ -141,9 +158,9 @@ export class GitHubStore {
   async commitRest(changes, message) {
     const base = `/repos/${this.owner}/${this.repo}/git`;
     const json = async res => {
-      if (res.status === 403 || res.status === 404) throw new StoreError("forbidden", "Ключу доступа не хватает прав на запись (нужно Contents: Read and write)");
-      if (!res.ok) throw new StoreError("http", "GitHub ответил " + res.status);
-      return res.json();
+      if (res.status === 403 || res.status === 404) throw new StoreError("forbidden", "У ключа нет прав на запись");
+      if (!res.ok) throw new StoreError("http", DOWN);
+      return body(res);
     };
     const tree = await json(await this.call("POST", base + "/trees", {
       base_tree: this.tree,

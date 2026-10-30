@@ -410,7 +410,7 @@ test("a forced dark theme also colours the phone's status bar (theme-color)", { 
     const m = [...document.querySelectorAll('meta[name="theme-color"]')].find(m => !m.media || matchMedia(m.media).matches);
     const probe = document.createElement("i"); probe.style.color = m.content; document.body.appendChild(probe);
     const c = getComputedStyle(probe).color; probe.remove();
-    return { bar: c, page: getComputedStyle(document.body).backgroundColor };
+    return { bar: c, page: getComputedStyle(document.querySelector(".appbar")).backgroundColor };
   })()`);
   let r = await bar();
   assert.equal(r.bar, r.page, "light: bar matches the page");
@@ -445,14 +445,14 @@ test("turning world indicators off removes data-only scores everywhere and the c
 
 /* ---------- copy of the data ---------- */
 
-test("«Скачать JSON» downloads a dated file with places, ratings, weights, queued and unsent changes", { skip }, async () => {
+test("«Скачать копию данных» downloads a dated file with places, ratings, weights, queued and unsent changes", { skip }, async () => {
   const files = repo({ weights: [{ id: "vika", who: "Вика", w: { legal: 20, money: 30, climate: 50 }, updatedAt: "2026-10-01T00:00:00.000Z" }] });
   const lost = [{ at: "2026-10-05T10:00:00.000Z", path: "places/porto.json", content: JSON.stringify({ id: "porto", name: "Порту", questions: "Старый вопрос" }), message: "Update place porto" }];
   await openApp(page, srv.url, { hash: "#/place/batumi", files, local: { "wtl:lost": lost } });
   await saveCardOffline("batumi", "questions", "Офлайн-вопрос");
   await go("#/settings");
   await page.eval(CAPTURE_DOWNLOAD);
-  await page.tap({ text: "Скачать JSON" });
+  await page.tap({ text: "Скачать копию данных" });
   await page.waitFor(`window.__dl.length === 1`, 3000, "download");
   const dl = await page.eval(`window.__dl[0]`);
   assert.match(dl.name, /^where-to-live-\d{4}-\d{2}-\d{2}\.json$/);
@@ -468,20 +468,19 @@ test("«Скачать JSON» downloads a dated file with places, ratings, weigh
   await page.eval(`localStorage.removeItem("mock:offline")`);
 });
 
-test("«Обновить из GitHub» loads a rating added on another device", { skip }, async () => {
+test("«Загрузить свежие данные» loads a rating added on another device", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/settings" });
   await editRemote("ratings/r9.json", vikaRating("r9"));
-  await page.tap({ text: "Обновить из GitHub" });
-  await page.waitFor(`/оценок 5/.test(document.getElementById("tokenMsg").innerText)`, 5000, "new count");
+  await page.tap({ text: "Загрузить свежие данные" });
+  assert.match(await toastText(/Данные обновлены/), /оценок 5/);
   await go("#/rank");
   assert.match(await page.text("#v-rank"), /оценок: 5/);
 });
 
-test("«Обновить из GitHub» without a key says that a key is needed", { skip }, async () => {
+test("without a key there is no refresh button, and settings say that a key is needed", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/settings", token: false });
-  await page.tap({ text: "Обновить из GitHub" });
-  const shown = await page.eval(`[document.getElementById("tokenMsg").innerText, document.getElementById("toast").hidden ? "" : document.getElementById("toast").innerText].join(" ")`);
-  assert.match(shown, /ключ/i, "the button does nothing visible");
+  assert.equal(await page.eval(`!!document.getElementById("refreshBtn")`), false, "a refresh button that cannot work is not shown");
+  assert.match(await page.text("#tokenForm"), /нужен ключ доступа/);
 });
 
 /* ---------- sync indicator ---------- */
@@ -531,7 +530,7 @@ test("opening the app offline shows the cached data and says so", { skip }, asyn
 
 test("the very first start offline does not claim that a cache is shown", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/rank", offline: true });
-  assert.match(await page.text("#v-rank"), /Мест: 0/);
+  assert.match(await page.text("#v-rank"), /Данные ещё не загружены/);
   assert.doesNotMatch(await syncText(), /показан кэш/, "nothing was ever loaded on this device");
 });
 
@@ -560,7 +559,7 @@ test("a GitHub server error shows «Ошибка связи» and clears on the 
     await page.tap({ sel: "#syncBtn" });
     await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 5000, "error shown");
     assert.equal(await syncDot(), "dot err");
-    assert.match(await page.text("#v-rank .banner.err"), /GitHub ответил 500/);
+    assert.match(await page.text("#v-rank .banner.err"), /GitHub временно не отвечает/);
   } finally {
     await page.eval(`localStorage.removeItem("test:status")`);
   }
@@ -654,7 +653,7 @@ test("«Выбросить» drops my clashed rating and keeps the other device'
   await page.tap({ sel: "#fSave" });
   assert.match(await toastText(/Нет связи/), /отправится позже/);
   const r1 = await remoteDoc("ratings/r1.json");
-  await editRemote("ratings/r1.json", Object.assign({}, r1, { review: "Правка с ноутбука" }));
+  await editRemote("ratings/r1.json", Object.assign({}, r1, { review: "Правка с ноутбука", scores: Object.assign({}, r1.scores, { "интернет": 3 }) }));
   await page.eval(`localStorage.removeItem("mock:offline")`);
   await go("#/rank");
   await page.tap({ sel: "#syncBtn" });
@@ -666,7 +665,7 @@ test("«Выбросить» drops my clashed rating and keeps the other device'
   assert.equal(await lostCount(), 0);
   const now = await remoteDoc("ratings/r1.json");
   assert.equal(now.review, "Правка с ноутбука");
-  assert.equal(now.scores["интернет"], 4);
+  assert.equal(now.scores["интернет"], 3);
   await go("#/place/porto");
   assert.match(await page.text("#v-place"), /Правка с ноутбука/);
 });

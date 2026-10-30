@@ -427,7 +427,8 @@ test("choosing the dark theme in the app also darkens the browser bar colour", {
   await page.tap({ sel: "#themeBtn" });
   assert.equal(await page.eval(`document.documentElement.getAttribute("data-theme")`), "dark");
   const bar = await page.eval(`[...document.querySelectorAll('meta[name="theme-color"]')].find(m => !m.media || matchMedia(m.media).matches)?.content`);
-  assert.equal(bar, "#0f1113", "theme-color follows the app theme, not only the system one");
+  assert.equal(bar, await page.eval(`(() => { const c = getComputedStyle(document.querySelector(".appbar")).backgroundColor.match(/\\d+/g).slice(0, 3); return "#" + c.map(x => (+x).toString(16).padStart(2, "0")).join(""); })()`), "theme-color follows the app theme, not only the system one");
+  assert.equal(bar, "#181b1e");
 });
 
 /* ---------- layout ---------- */
@@ -490,7 +491,7 @@ test("Tab walks the header first and then the page, with a visible focus ring on
       await pressTab();
       stops.push(await page.eval(`(() => { const e = document.activeElement; if (!e || e === document.body) return { label: "BODY" }; const cs = getComputedStyle(e); return { label: (e.getAttribute("aria-label") || e.innerText || e.value || "").replace(/\\s+/g, " ").trim().slice(0, 30), date: e.type === "date", ring: e.matches(":focus-visible") && ((cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) >= 1) || cs.boxShadow !== "none") }; })()`));
     }
-    assert.deepEqual(stops.slice(0, 8).map(s => s.label), ["Где жить", "Карта", "Рейтинг", "Места", "Оценить", "Подключено", "Тема: как в системе", "Настройки"], route + " header order");
+    assert.deepEqual(stops.slice(0, 9).map(s => s.label), ["Перейти к содержимому", "Где жить", "Карта", "Рейтинг", "Места", "Оценить", "Подключено", "Тема: как в системе", "Настройки"], route + " header order");
     assert.ok(stops.slice(8).every(s => s.label !== "BODY"), route + ": focus never falls back to the page body");
     assert.deepEqual(stops.filter(s => !s.ring && !s.date).map(s => s.label), [], route + ": every focused control shows a focus ring");
   }

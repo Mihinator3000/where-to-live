@@ -331,7 +331,7 @@ test("in the places × groups table, rows scored only by world data are told apa
 
 test("flags put the veto first and show our disagreement on language in Порту with both numbers, linking to the place", { skip }, async () => {
   await open();
-  const flags = await page.eval(`[...document.querySelectorAll(".flags .flag")].map(f => ({ sev: f.querySelector(".sev").innerText.trim(), head: f.querySelector("a").innerText.trim(), href: f.querySelector("a").getAttribute("href"), text: f.querySelector("small").innerText.trim() }))`);
+  const flags = await page.eval(`(() => { const at = f => { let g = f.previousElementSibling; while (g && !g.classList.contains("flag-place")) g = g.previousElementSibling; return (g ? g.innerText.trim() + ": " : "") + f.querySelector("a").innerText.trim(); }; return [...document.querySelectorAll(".flags .flag")].map(f => ({ sev: f.querySelector(".sev").innerText.trim(), head: at(f), href: f.querySelector("a").getAttribute("href"), text: f.querySelector("small").innerText.trim() })); })()`);
   assert.match(flags[0].head, /Батуми: вето/);
   assert.match(flags[0].text, /Плесень в каждой квартире, кожа не выдержит/);
   const lang = flags.find(f => f.head === "Порту: Язык в быту");
@@ -357,7 +357,7 @@ test("when there are flags, the section still explains what makes a flag", { ski
 
 test("a red flag we both share on the same subcategory is listed once, naming both of us", { skip }, async () => {
   await open();
-  const sea = await page.eval(`[...document.querySelectorAll(".flags .flag")].filter(f => f.querySelector("a").innerText.trim() === "Тбилиси: Море и пляжи").map(f => f.querySelector("small").innerText)`);
+  const sea = await page.eval(`(() => { const at = f => { let g = f.previousElementSibling; while (g && !g.classList.contains("flag-place")) g = g.previousElementSibling; return (g ? g.innerText.trim() + ": " : "") + f.querySelector("a").innerText.trim(); }; return [...document.querySelectorAll(".flags .flag")].filter(f => at(f) === "Тбилиси: Море и пляжи").map(f => f.querySelector("small").innerText); })()`);
   assert.equal(sea.length, 1, `the same red flag is listed ${sea.length} times: ${JSON.stringify(sea)}`);
   assert.match(sea[0], /Михаил/);
   assert.match(sea[0], /Вика/);

@@ -7,6 +7,7 @@ const SHELL = [
   "css/app.css",
   "css/fonts.css",
   "js/app.js",
+  "js/boot.js",
   "js/calc.js",
   "js/data.js",
   "js/facts.js",
@@ -63,15 +64,7 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== location.origin) return;
   e.respondWith(caches.open(VERSION).then(async cache => {
-    const hit = await cache.match(req, { ignoreSearch: true });
-    const net = fetch(req.url, { cache: "no-cache", credentials: "same-origin" }).then(res => {
-      if (res.ok) cache.put(req, res.clone());
-      return res;
-    });
-    if (hit) {
-      e.waitUntil(net.catch(() => {}));
-      return hit;
-    }
-    return net.catch(() => (req.mode === "navigate" ? cache.match("index.html") : Response.error()));
+    const hit = (await cache.match(req, { ignoreSearch: true })) || (req.mode === "navigate" ? await cache.match("index.html") : null);
+    return hit || fetch(req).catch(() => Response.error());
   }));
 });

@@ -5,7 +5,16 @@ export const CONF = { A: "проверили в быту", B: "видели ка
 export const MODE_LABEL = { "отпуск": "не работали", "удалёнка": "работали все будни", "смешанно": "работали часть дней" };
 const emptyForm = (who = local.get("me", "")) => ({ id: null, createdAt: null, who, place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", questions: "", scores: {}, conf: {}, notes: {}, draftId: null, stamp: null, _oid: null });
 const keyOf = f => (f.id ? "edit:" + f.id : f.place || "_new");
-const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined, _oid: undefined }));
+const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined, _oid: undefined, _was: undefined }));
+const FIELDS = ["start", "end", "days", "season", "mode", "housing", "retro", "year", "veto", "review", "surprises"];
+const same = (a, b) => JSON.stringify(a == null || a === "" ? null : a) === JSON.stringify(b == null || b === "" ? null : b);
+function diff(body, was) {
+  const patch = {}, base = {};
+  FIELDS.forEach(k => { if (!same(body[k], was[k])) { patch[k] = body[k]; base[k] = was[k] == null ? null : was[k]; } });
+  ["scores", "conf", "notes"].forEach(g => new Set(Object.keys(body[g] || {}).concat(Object.keys(was[g] || {}))).forEach(k => { const a = (body[g] || {})[k], b = (was[g] || {})[k]; if (!same(a, b)) { patch[g + "." + k] = a == null ? null : a; base[g + "." + k] = b == null ? null : b; } }));
+  patch.deleted = false; base.deleted = was.deleted == null ? null : was.deleted;
+  return { patch, base };
+}
 const changed = f => !f.id || f._orig !== snap(f);
 const hasContent = f => Object.keys(f.scores).length > 0 || f.year != null || !!(f.start || f.end || f.season || f.mode || f.housing) || !!(f.review.trim() || f.surprises.trim() || f.veto.trim() || (f.questions || "").trim()) || Object.values(f.notes).some(v => v && v.trim());
 const numRu = v => String(v).replace(".", ",");
@@ -26,6 +35,29 @@ export function datesRu(start, end) {
   return `${a.d} ${M[a.m - 1]} ${a.y} – ${b.d} ${M[b.m - 1]} ${b.y}`;
 }
 
+export function ratingField(schema, k, v) {
+  const [a, b] = String(k).split(".");
+  if (["days", "createdAt", "updatedAt", "id", "place", "who"].includes(a)) return null;
+  const empty = v == null || v === "", s = String(v);
+  const text = x => `«${String(x).length > 60 ? String(x).slice(0, 60) + "…" : x}»`;
+  const cat = key => (schema.cats.find(c => c.key === key) || {}).name || key;
+  if (a === "scores") return { name: cat(b), value: empty ? "без оценки" : s };
+  if (a === "conf") return { name: `Откуда знаем (${cat(b)})`, value: `«${CONF[v] || CONF.B}»` };
+  if (a === "notes") return { name: `Комментарий: ${(schema.groups.find(g => g.key === b) || {}).name || b}`, value: empty ? "пусто" : text(v) };
+  if (a === "start" || a === "end") return { name: a === "start" ? "Приехали" : "Уехали", value: empty ? "пусто" : datesRu(s) };
+  if (a === "retro") return { name: "Когда оценивали", value: v ? "по памяти" : "сразу после поездки" };
+  if (a === "year") return { name: "Год здесь", value: empty ? "пусто" : `${s}/10` };
+  if (a === "mode") return { name: "Работа", value: empty ? "пусто" : text(MODE_LABEL[v] || v) };
+  if (a === "deleted") return { name: "Оценка", value: v ? "удалена" : "не удалена" };
+  const NAMES = { review: "Отзыв", veto: "Вето", surprises: "Сюрпризы", season: "Сезон", housing: "Жильё" };
+  return { name: NAMES[a] || k, value: empty ? "пусто" : typeof v === "string" ? text(v) : s };
+}
+
+function theirText(schema, theirs) {
+  const items = (theirs || []).map(([k, v]) => ratingField(schema, k, v)).filter(Boolean).map(x => `${x.name} — ${x.value}`);
+  return items.length ? ` (там: ${items.join("; ")})` : "";
+}
+
 export class RateForm {
   constructor(el, schema, hooks) {
     this.el = el;
@@ -36,6 +68,7 @@ export class RateForm {
     this.GROUPS = schema.groups.map(g => ({ g, cats: schema.cats.filter(c => c.group === g.key && c.form).sort((a, b) => Number(b.star) - Number(a.star) || Number(!!a.opt) - Number(!!b.opt)) })).filter(x => x.cats.length);
     this.form = Object.assign(emptyForm(), local.get("draft", {}));
     this.drafts = local.get("drafts", {});
+    this.restored = !this.form.id && hasContent(this.form);
     this.onlyStar = local.get("onlyStar", true);
     this.armed = "";
     this.confOpen = null;
@@ -47,9 +80,11 @@ export class RateForm {
     this.build();
   }
 
-  saveDraft() { clearTimeout(this.timer); this.timer = setTimeout(() => local.set("draft", this.form), 300); }
+  saveDraft() { clearTimeout(this.timer); this.timer = setTimeout(() => this.stored(local.set("draft", this.form)), 300); }
 
-  persist() { local.set("draft", this.form); local.set("drafts", this.drafts); }
+  persist() { this.stored(local.set("draft", this.form) && local.set("drafts", this.drafts)); }
+
+  stored(ok) { if (ok === !this.full) return; this.full = !ok; this.sync(); }
 
   stash() {
     const f = this.form, k = keyOf(f);
@@ -60,6 +95,7 @@ export class RateForm {
   drop(f) { Object.keys(this.drafts).forEach(k => { if (this.drafts[k] === f) delete this.drafts[k]; }); }
 
   switchTo(next) {
+    this.restored = false;
     this.stash();
     this.form = next;
     this.drop(next);
@@ -82,7 +118,7 @@ export class RateForm {
     const seg = (name, values, label = v => v) => values.map(v => `<button type="button" data-opt="${name}" data-val="${esc(v)}" aria-pressed="false">${esc(label(v))}</button>`).join("");
     const extra = this.schema.cats.filter(c => c.form && !c.star).length;
     let html = `<h1>Оценить поездку</h1><div id="fTop"></div><div class="panel fcard">
-      <h3>Кто и где</h3>
+      <h2>Кто и где</h2>
       <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили: пустой ответ лучше догадки.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше. «Лучше» — значит лучше для нас: тише, чище, безопаснее.</span><span><b>Откуда знаем</b> — кнопка под ответом. По умолчанию «видели как туристы». Поменяйте на «проверили в быту», если жили этим сами (снимали жильё, ходили к врачу), или на «со слов живущих» / «по сайтам и рейтингам», если сами не видели.</span><span>Аренду, цены и жёсткость воды здесь не оцениваем: это цифры места, они вписываются один раз в его карточку.</span></div>
       <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает" id="fWho">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div><span class="small muted" id="fWhoNote" hidden></span></div>
       <div class="field"><label class="lbl" for="fPlace">Место</label><select id="fPlace"></select><span class="small muted" id="fPlaceHint">Нет в списке — <a href="#/map">найдите на карте</a>, откройте карточку и нажмите «Добавить как место».</span></div>
@@ -98,7 +134,7 @@ export class RateForm {
       <span class="small muted">Остальные вопросы — по желанию: отвечайте, если было что проверить.</span>
     </div>`;
     this.GROUPS.forEach(({ g, cats }) => {
-      html += `<div class="panel fcard" data-group="${g.key}"><h3>${esc(g.name)} <span class="gcount" id="gc-${g.key}"></span></h3><div>`;
+      html += `<div class="panel fcard" data-group="${g.key}"><h2>${esc(g.name)} <span class="gcount" id="gc-${g.key}"></span></h2><div>`;
       cats.forEach(c => {
         const vals = HALF.filter(v => v <= (c.cap || 5));
         const ends = c.cap ? `<span>сильно хуже</span><span></span><span>как СПб</span>` : `<span>хуже СПб</span><span>как СПб</span><span>лучше</span>`;
@@ -114,7 +150,7 @@ export class RateForm {
       html += `</div><button type="button" class="linkbtn small addnote" data-addnote="${g.key}">+ комментарий: ${esc(g.name)}</button><label class="field" for="note-${g.key}" data-notebox="${g.key}" hidden><span class="lbl">Комментарий: что видели, почему такие баллы</span><textarea id="note-${g.key}" data-note="${g.key}" rows="2"></textarea></label></div>`;
     });
     html += `<button type="button" class="btn ghost wide" id="fShowAll" hidden>Показать остальные вопросы (ещё ${extra}, по желанию)</button>
-    <div class="panel fcard"><h3>В целом</h3>
+    <div class="panel fcard"><h2>В целом</h2>
       <div class="field"><span class="lbl">Прожили бы здесь год? Отдельная шкала 0–10: 0 — ни за что, 10 — хоть завтра</span><div class="pick y" role="group" aria-label="Год здесь">${Array.from({ length: 11 }, (_, i) => `<button type="button" data-year="${i}" aria-pressed="false">${i}</button>`).join("")}</div></div>
       <label class="field" for="fReview"><span class="lbl">Отзыв в двух-трёх фразах (виден в карточке места; второй из вас увидит его после своей оценки)</span><textarea id="fReview" rows="3"></textarea></label>
       <label class="field" for="fSurprises"><span class="lbl">Сюрпризы: что оказалось не так, как ждали</span><textarea id="fSurprises" rows="2"></textarea></label>
@@ -124,6 +160,7 @@ export class RateForm {
     <div class="panel fcard"><div class="btns">
       <button type="button" class="btn ghost" id="fReset">Очистить форму</button>
       <button type="button" class="btn ghost" id="fCancel" hidden>Отменить правку</button>
+      <button type="button" class="btn ghost" id="fDeleteNo" hidden>Не удалять</button>
       <button type="button" class="btn danger" id="fDelete" hidden>Удалить оценку</button>
     </div></div>
     <div class="savebar">
@@ -137,7 +174,22 @@ export class RateForm {
     this.el.addEventListener("input", e => this.onInput(e));
     this.el.addEventListener("change", e => this.onInput(e));
     this.el.addEventListener("submit", e => { e.preventDefault(); this.save(); });
-    this.el.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault(); });
+    this.el.addEventListener("keydown", e => this.onKey(e));
+  }
+
+  onKey(e) {
+    const t = e.target;
+    if (e.key === "Enter" && t.tagName === "INPUT") { e.preventDefault(); return; }
+    if (e.key === "Escape" && this.confOpen) { const k = this.confOpen; this.confOpen = null; this.sync(); this.el.querySelector(`[data-conf="${CSS.escape(k)}"]`).focus({ preventScroll: true }); e.preventDefault(); return; }
+    const pick = t.closest && t.closest(".pick");
+    if (!pick || t.tagName !== "BUTTON") return;
+    const bs = [...pick.querySelectorAll("button")], i = bs.indexOf(t);
+    const j = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: bs.length - 1 }[e.key];
+    if (j == null) return;
+    e.preventDefault();
+    const b = bs[Math.max(0, Math.min(bs.length - 1, j))];
+    bs.forEach(x => { x.tabIndex = x === b ? 0 : -1; });
+    b.focus();
   }
 
   arm(name) {
@@ -160,6 +212,7 @@ export class RateForm {
     const f = this.form;
     if (b.id === "fReset") {
       if (!this.arm("reset")) return;
+      this.restored = false;
       this.form = Object.assign(emptyForm(f.who), { id: f.id, createdAt: f.createdAt, place: f.place, _oid: f._oid, _orig: f._orig });
       this.persist(); this.sync(); this.msg("Форма очищена");
       return;
@@ -167,6 +220,7 @@ export class RateForm {
     if (b.id === "fCancel") { this.drop(f); this.form = emptyForm(f.who); this.armed = ""; this.persist(); this.setPlaces(this.places); this.msg("Правка отменена"); return; }
     if (b.id === "fNew") { this.switchTo(this.drafts._new || emptyForm(f.who)); window.scrollTo(0, 0); return; }
     if (b.id === "fDelete") { this.remove(); return; }
+    if (b.id === "fDeleteNo") { this.armed = ""; this.sync(); $("fDelete").focus(); return; }
     if (b.id === "fShowAll") { this.showAll(); return; }
     if (b.dataset.addnote) { this.notesOpen.add(b.dataset.addnote); this.sync(); const t = $("note-" + b.dataset.addnote); t.focus({ preventScroll: true }); t.scrollIntoView({ block: "nearest" }); return; }
     if (b.dataset.draft) { const d = this.drafts[b.dataset.draft]; if (d) this.switchTo(d); window.scrollTo(0, 0); return; }
@@ -187,6 +241,9 @@ export class RateForm {
       const k = b.dataset.confset;
       if (b.dataset.l === "B") delete f.conf[k]; else f.conf[k] = b.dataset.l;
       this.confOpen = null;
+      this.saveDraft(); this.sync();
+      this.el.querySelector(`[data-conf="${CSS.escape(k)}"]`).focus({ preventScroll: true });
+      return;
     } else if (b.dataset.year) {
       const v = Number(b.dataset.year);
       f.year = f.year === v ? null : v;
@@ -199,6 +256,7 @@ export class RateForm {
     const f = this.form;
     if (f.id || id === f.place) return;
     if (!hasContent(f)) { this.switchTo(this.drafts[id] || Object.assign(emptyForm(f.who), { place: id })); return; }
+    if (this.restored && f.place) { const was = this.hooks.placeName(f.place) || "прошлое место"; this.switchTo(this.drafts[id] || Object.assign(emptyForm(f.who), { place: id })); this.msg(`Ответы про ${was} остались в черновике — он вверху, в «Несохранённых черновиках».`); return; }
     if (this.drafts[id] && this.drafts[id] !== f) { this.drafts[id + "~" + Date.now().toString(36)] = this.drafts[id]; delete this.drafts[id]; }
     this.drop(f);
     f.place = id;
@@ -208,7 +266,7 @@ export class RateForm {
   onInput(e) {
     const t = e.target, f = this.form;
     if (t.dataset.note) f.notes[t.dataset.note] = t.value;
-    else if (t.id === "fPlace") { if (e.type !== "change") return; this.pickPlace(t.value); }
+    else if (t.id === "fPlace") { if (e.type !== "change") return; this.msg(""); this.pickPlace(t.value); this.saveDraft(); this.sync(); return; }
     else if (t.id === "fStart") f.start = t.value;
     else if (t.id === "fEnd") { f.end = t.value; if (f.end) { const ref = f.id && f.createdAt ? Date.parse(f.createdAt) : Date.now(); f.retro = (ref - new Date(f.end).getTime()) / 864e5 > 31; } }
     else if (t.id === "fRetro") f.retro = t.checked;
@@ -226,7 +284,7 @@ export class RateForm {
     this.places = places.filter(p => p.status !== "база");
     const sel = $("fPlace");
     const opts = this.places.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
-    sel.innerHTML = `<option value="">— выберите —</option>` + opts.map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.country ? " · " + esc(p.country) : ""}</option>`).join("");
+    sel.innerHTML = `<option value="">— выберите —</option>` + opts.map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.country ? " · " + esc(p.country) : ""}${p.status === "отсев" ? " · отсев" : ""}</option>`).join("");
     sel.value = this.form.place;
     const note = !this.places.length && this.hooks.emptyNote ? this.hooks.emptyNote() : true;
     $("fPlaceHint").innerHTML = note === true ? `Нет в списке — <a href="#/map">найдите на карте</a>, откройте карточку и нажмите «Добавить как место».` : note ? esc(note) : `Места появятся после подключения данных: вставьте ключ в <a href="#/settings">настройках</a>.`;
@@ -260,6 +318,7 @@ export class RateForm {
       scores: Object.assign({}, r.scores), conf: Object.assign({}, r.conf), notes: Object.assign({}, r.notes),
     });
     f._oid = oid || null;
+    f._was = structuredClone(r);
     f._orig = snap(f);
     this.switchTo(f);
   }
@@ -268,7 +327,9 @@ export class RateForm {
     const f = this.form, H = this.hooks;
     let html = "";
     const others = Object.keys(this.drafts).filter(k => this.drafts[k] !== f && hasContent(this.drafts[k]));
-    if (others.length) html += `<div class="banner drafts"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; const armed = this.armed === "drop:" + k; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n} ${plural(n, "ответ", "ответа", "ответов")})` : ""}</button><button type="button" class="chipx${armed ? " armed" : ""}" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик">${armed ? "Выбросить?" : "×"}</button></span>`; }).join("")}</div>`;
+    if (others.length) html += `<div class="banner drafts"><b>Несохранённые черновики:</b> ${others.map(k => { const d = this.drafts[k]; const n = Object.keys(d.scores).length; const armed = this.armed === "drop:" + k; return `<span class="draft-chip"><button type="button" class="linkbtn" data-draft="${esc(k)}">${d.id ? "правка: " : ""}${esc(H.placeName(d.place) || "без места")}${n ? ` (${n} ${plural(n, "ответ", "ответа", "ответов")})` : ""}</button><button type="button" class="chipx${armed ? " armed" : ""}" data-dropdraft="${esc(k)}" aria-label="Выбросить черновик: ${esc(H.placeName(d.place) || "без места")}">${armed ? "Выбросить?" : "×"}</button></span>`; }).join("")}</div>`;
+    if (this.full) html += `<div class="banner err">Память браузера на этом устройстве переполнена: ответы не сохраняются и пропадут, если закрыть приложение. Нажмите «Сохранить», чтобы отправить оценку.</div>`;
+    if (this.restored && !f.id && hasContent(f)) { const n = Object.keys(f.scores).length; html += `<div class="banner">Черновик — ещё не сохранён${f.place ? ": " + esc(H.placeName(f.place) || "место") : ""}${n ? `, ${n} ${plural(n, "ответ", "ответа", "ответов")}` : ""}. Допишите и нажмите «Сохранить» или «Очистить форму».</div>`; }
     if (f.id) html += `<div class="edit-head"><span>Правка оценки: <b>${esc(H.placeName(f.place) || "место удалено из данных")}</b> · ${esc(f.who)}${f.start ? " · " + esc(datesRu(f.start, f.end)) : ""}</span><button type="button" class="btn ghost small" id="fNew">Новая оценка</button></div>${H.placeName(f.place) ? "" : `<div class="banner err">Места этой оценки больше нет в данных, поэтому её нельзя пересохранить — только удалить.</div>`}`;
     else if (f.place && f.who) {
       const mine = H.myRating(f.place, f.who);
@@ -301,6 +362,7 @@ export class RateForm {
     el.querySelectorAll("[data-confpick]").forEach(d => { const k = d.dataset.confpick; d.hidden = this.confOpen !== k || f.scores[k] == null; });
     el.querySelectorAll("[data-confset]").forEach(b => b.setAttribute("aria-pressed", String((f.conf[b.dataset.confset] || "B") === b.dataset.l)));
     el.querySelectorAll("[data-year]").forEach(b => b.setAttribute("aria-pressed", String(f.year === Number(b.dataset.year))));
+    el.querySelectorAll(".pick").forEach(p => { const bs = [...p.querySelectorAll("button")], on = bs.find(b => b.getAttribute("aria-pressed") === "true") || (bs.includes(document.activeElement) ? document.activeElement : bs[0]); bs.forEach(b => { b.tabIndex = b === on ? 0 : -1; }); });
     Object.keys(f.scores).forEach(k => this.shown.add(k));
     el.querySelectorAll("[data-q]").forEach(q => { q.hidden = this.onlyStar && q.dataset.star !== "1" && !this.shown.has(q.dataset.q); });
     this.GROUPS.forEach(({ g, cats }) => {
@@ -331,7 +393,9 @@ export class RateForm {
     $("fCancel").hidden = !f.id;
     const del = $("fDelete");
     del.hidden = !f.id;
-    del.textContent = this.armed === "delete" ? "Точно удалить?" : "Удалить оценку";
+    $("fDeleteNo").hidden = !f.id || this.armed !== "delete" || !!this.removing;
+    del.textContent = this.removing ? "Удаляю…" : this.armed === "delete" ? "Точно удалить?" : "Удалить оценку";
+    del.disabled = !!this.removing;
     const canWrite = this.hooks.canWrite(), orphan = !!f.id && !this.hooks.placeName(f.place);
     $("fSave").disabled = this.saving || !canWrite || orphan;
     $("fSave").textContent = this.saving ? "Сохраняю…" : f.id ? "Сохранить правку" : "Сохранить";
@@ -339,15 +403,22 @@ export class RateForm {
     $("fNoKey").hidden = canWrite;
   }
 
+
   msg(text, err) { const m = $("fMsg"); m.textContent = text; m.classList.toggle("err", !!err); }
 
   fail(text, target) {
-    if (target) target.scrollIntoView({ block: "center" });
     this.msg(text, true);
+    if (!target) return;
+    const t = target.matches("input, select, textarea, button") ? target : target.querySelector("button") || target;
+    target.scrollIntoView({ block: "center" });
+    target.setAttribute("aria-invalid", "true");
+    target.setAttribute("aria-describedby", "fMsg");
+    t.focus({ preventScroll: true });
   }
 
   async save() {
     this.msg("");
+    this.el.querySelectorAll("[aria-invalid]").forEach(x => { x.removeAttribute("aria-invalid"); x.removeAttribute("aria-describedby"); });
     const f = this.form;
     if (!f.who) return this.fail("Выберите, кто оценивает.", $("fWho"));
     if (!f.place || !this.places.some(p => p.id === f.place)) return this.fail("Выберите место.", $("fPlace"));
@@ -370,10 +441,11 @@ export class RateForm {
     };
     this.saving = true; this.sync();
     try {
-      const res = await this.hooks.save(body, { isNew, baseOid: f._oid || undefined, questions: (f.questions || "").trim() });
+      const d = !isNew && f._was ? diff(body, f._was) : null;
+      const res = await this.hooks.save(body, { isNew, baseOid: f._oid || undefined, questions: (f.questions || "").trim(), patch: d && d.patch, was: d && d.base });
       if (!local.get("me", "")) local.set("me", f.who);
       this.drop(f);
-      if (this.form === f) { this.form = emptyForm(f.who); this.armed = ""; this.shown.clear(); }
+      if (this.form === f) { this.form = emptyForm(f.who); this.armed = ""; this.shown.clear(); this.restored = false; }
       this.persist();
       this.saving = false; this.sync();
       this.hooks.saved(res, body.place);
@@ -383,9 +455,13 @@ export class RateForm {
       if (gone) { f.id = null; f._oid = null; f._orig = undefined; f.createdAt = null; f.draftId = null; f.stamp = null; this.persist(); }
       this.sync();
       const text = gone ? "Эту оценку удалили на другом устройстве. Ваши ответы остались в форме: нажмите «Сохранить», чтобы записать их как новую оценку, или «Очистить форму»."
+        : err.code === "clash" && f._was && (err.theirs || []).length ? (err.theirs.forEach(([k, v]) => { const [a, b] = k.split("."); if (b) f._was[a] = Object.assign({}, f._was[a], { [b]: v }); else f._was[a] = v; }), this.persist(), `Эту оценку только что изменили на другом устройстве${theirText(this.schema, err.theirs)}. Нажмите «Сохранить правку» ещё раз — запишется ваше.`)
         : err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Ваши правки остались в форме: откройте оценку заново из досье и перенесите их."
-        : err.code === "http" || err.code === "limit" ? `${err.message}: похоже, сбой на стороне GitHub. Оценка не сохранена, ответы остались в форме — нажмите «Сохранить» ещё раз через минуту.`
-        : err.message || "Не сохранилось";
+        : err.code === "limit" ? `${err.message}. Оценка не сохранена, ответы остались в форме — нажмите «Сохранить» ещё раз после этого времени.`
+        : err.code === "forbidden" ? "Оценка не сохранена, ответы остались в форме: у ключа нет прав на запись. Замените ключ в настройках — нужен доступ на чтение и запись."
+        : err.code === "storage" ? "Нет связи, а память браузера на этом устройстве переполнена, поэтому оценку не сохранить даже в очередь. Ответы остались в форме — нажмите «Сохранить», когда появится связь."
+        : ["http", "graphql", "conflict", "timeout"].includes(err.code) ? `${err.message}. Оценка не сохранена, ответы остались в форме — нажмите «Сохранить» ещё раз через минуту.`
+        : err.message || "Оценка не сохранена, ответы остались в форме.";
       this.msg(text, true);
       if (this.hooks.failed) this.hooks.failed(err, text);
     }
@@ -393,14 +469,19 @@ export class RateForm {
 
   async remove() {
     const f = this.form;
-    if (!f.id || !this.arm("delete")) return;
+    if (!f.id || this.removing || !this.arm("delete")) return;
+    this.removing = true; this.sync();
     try {
       const r = await this.hooks.remove(f.id, f._oid);
       const place = f.place;
       this.drop(f);
       if (this.form === f) this.form = emptyForm(f.who);
       this.persist(); this.sync();
+      this.removing = false; this.sync();
       this.hooks.removed(place, r);
-    } catch (err) { this.msg(err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Откройте её заново из досье." : err.message || "Не удалилось", true); }
+    } catch (err) {
+      this.removing = false; this.sync();
+      this.msg(err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Откройте её заново из досье." : `Оценка не удалена: ${err.code === "forbidden" ? "у ключа нет прав на запись — замените ключ в настройках" : err.message || "неизвестная ошибка"}. Попробуйте ещё раз ${err.code === "limit" ? "после этого времени" : "через минуту"}.`, true);
+    }
   }
 }

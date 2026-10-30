@@ -5,7 +5,7 @@ export const DEFAULT_REPO = "Mihinator3000/where-to-live-data";
 const DIRS = ["places", "ratings", "weights"];
 
 const pathOf = (dir, id) => `${dir}/${id}.json`;
-const QUEUE = ["offline", "auth", "access"];
+const QUEUE = ["offline", "auth", "access", "timeout"];
 const getK = (d, k) => { const [a, b] = k.split("."); const x = d ? d[a] : undefined; return b ? (x || {})[b] : x; };
 const setK = (d, k, v) => { const [a, b] = k.split("."); if (!b) { d[a] = v; return; } const o = Object.assign({}, d[a]); if (v == null) delete o[b]; else o[b] = v; d[a] = o; };
 const same = (a, b) => JSON.stringify(a == null || a === "" ? null : a) === JSON.stringify(b == null || b === "" ? null : b);
@@ -14,15 +14,30 @@ export { getK };
 export function patchDoc(doc, patch, add) {
   const d = Object.assign({}, doc);
   Object.keys(patch || {}).forEach(k => setK(d, k, patch[k]));
-  Object.keys(add || {}).forEach(k => { const v = add[k]; if (v) d[k] = d[k] ? String(d[k]).trim() + "\n" + v : v; });
+  Object.keys(add || {}).forEach(k => { const v = String(add[k] || "").trim(), cur = d[k] ? String(d[k]).trim() : ""; if (v && !("\n" + cur + "\n").includes("\n" + v + "\n")) d[k] = cur ? cur + "\n" + v : v; });
   return d;
+}
+
+const LINES = ["questions"];
+const lines = s => String(s == null ? "" : s).split("\n").map(x => x.trim()).filter(Boolean);
+const grown = (was, now) => { const a = lines(was), b = lines(now); return a.every((x, i) => b[i] === x) ? b.slice(a.length) : null; };
+export function lineMerge(remote, ch) {
+  if (!ch.patch) return ch;
+  const keys = LINES.filter(k => k in ch.patch && k in (ch.base || {}) && grown(ch.base[k], getK(remote, k)) && grown(ch.base[k], ch.patch[k]));
+  if (!keys.length) return ch;
+  const patch = Object.assign({}, ch.patch), base = Object.assign({}, ch.base), add = Object.assign({}, ch.add);
+  keys.forEach(k => { const more = grown(base[k], patch[k]).join("\n"); delete patch[k]; delete base[k]; if (more) add[k] = add[k] ? more + "\n" + add[k] : more; });
+  return Object.assign({}, ch, { patch, base, add });
 }
 
 export const overlap = (remote, ch) => Object.keys(ch.patch || {}).filter(k => !same(getK(remote, k), (ch.base || {})[k]) && !same(getK(remote, k), ch.patch[k]));
 
+const created = (c, i) => i === 0 && c.baseOid === null && !c.patch && !c.add && c.path.startsWith("places/");
+const pick = (o, ks) => Object.fromEntries(Object.entries(o || {}).filter(([k]) => ks.includes(k)));
+
 function fold(list) {
   const last = list[list.length - 1];
-  if (!list.every(c => c.patch || c.add)) return Object.assign({}, last, { patch: null, base: null, add: null });
+  if (!list.every((c, i) => c.patch || c.add || created(c, i))) return Object.assign({}, last, { patch: null, base: null, add: null });
   const patch = {}, base = {}, add = {};
   list.forEach(c => {
     Object.keys(c.patch || {}).forEach(k => { if (!(k in base)) base[k] = (c.base || {})[k]; patch[k] = c.patch[k]; delete add[k]; });
@@ -110,8 +125,23 @@ export class Data extends EventTarget {
 
   oidOf(dir, id) { return this.oids[pathOf(dir, id)] || null; }
 
+  keep() {
+    if (local.set("pending", this.pending)) return true;
+    local.del("cache");
+    return local.set("pending", this.pending);
+  }
+
+  hold(changes, message, e) {
+    this.pending.push(...changes.map(c => Object.assign({ message }, c)));
+    if (this.keep()) return;
+    this.pending = this.pending.slice(0, -changes.length);
+    if (e.code === "offline") this.status = "offline"; else this.fail(e);
+    this.emit();
+    throw new StoreError("storage", "память браузера на этом устройстве переполнена");
+  }
+
   fail(e) {
-    this.status = e.code === "offline" ? "offline" : e.code === "auth" || e.code === "access" ? "auth" : "error";
+    this.status = e.code === "offline" ? "offline" : ["auth", "access", "forbidden"].includes(e.code) ? "auth" : "error";
     this.error = e.message;
     this.errorCode = e.code;
   }
@@ -123,7 +153,10 @@ export class Data extends EventTarget {
 
   rebase(c) {
     const remote = this.docOf(c.path);
-    if (!c.patch && !c.add || !remote || overlap(remote, c).length) return null;
+    if (!c.patch && !c.add || !remote) return null;
+    if (c.path.startsWith("ratings/") && c.patch && c.patch.deleted === true && !remote.deleted) return null;
+    c = lineMerge(remote, c);
+    if (overlap(remote, c).length) return null;
     const now = new Date().toISOString();
     return Object.assign({}, c, { content: serialize(Object.assign(patchDoc(remote, c.patch, c.add), { updatedAt: now })), baseOid: this.oids[c.path] || null });
   }
@@ -161,6 +194,7 @@ export class Data extends EventTarget {
       else if (this.status === "offline") { this.status = "live"; this.error = ""; this.emit(); }
     } catch (e) {
       if (e.code === "offline" && this.status !== "offline") { this.status = "offline"; this.emit(); }
+      else if (["auth", "access"].includes(e.code)) { this.fail(e); this.emit(); }
     }
   }
 
@@ -177,7 +211,7 @@ export class Data extends EventTarget {
       try {
         await this.store.commit(batch.map(c => ({ path: c.path, content: c.content, baseOid: c.baseOid })), batch.flatMap(c => c.messages).join("; ").slice(0, 200));
         this.pending = this.pending.slice(n);
-        this.flushed = (this.flushed || 0) + batch.length;
+        this.flushed = (this.flushed || 0) + new Set(batch.flatMap(c => c.messages)).size;
       } catch (e) {
         if (e.code !== "clash") throw e;
         this.adopt();
@@ -185,7 +219,13 @@ export class Data extends EventTarget {
         e.paths.forEach(p => {
           const f = fold(this.pending.filter(c => c.path === p));
           const merged = this.rebase(f);
-          if (merged) keep.push(merged); else lost.push(f);
+          if (merged) { keep.push(merged); return; }
+          const remote = this.docOf(p), o = remote && f.patch && !(p.startsWith("ratings/") && f.patch.deleted === true) ? overlap(remote, lineMerge(remote, f)) : [];
+          const rest = o.length ? Object.keys(f.patch).filter(k => !o.includes(k)) : [];
+          const part = rest.length && this.rebase(Object.assign({}, f, { patch: pick(f.patch, rest), base: pick(f.base, rest) }));
+          if (!part) { lost.push(f); return; }
+          keep.push(part);
+          lost.push(Object.assign({}, f, { patch: pick(f.patch, o), base: pick(f.base, o), add: null }));
         });
         if (lost.length) {
           local.set("lost", local.get("lost", []).concat(lost.map(c => Object.assign({ at: new Date().toISOString() }, c))).slice(-50));
@@ -207,7 +247,7 @@ export class Data extends EventTarget {
       if (changes.some(c => queued.has(c.path))) {
         const mine = changes.map(c => Object.assign({ message }, c));
         this.pending.push(...mine);
-        local.set("pending", this.pending);
+        if (!this.keep()) { this.pending = this.pending.filter(c => !mine.includes(c)); throw new StoreError("storage", "память браузера на этом устройстве переполнена"); }
         const since = new Date().toISOString();
         try {
           await this.flush();
@@ -220,6 +260,7 @@ export class Data extends EventTarget {
             this.emit();
             throw Object.assign(new StoreError("clash", "Это уже изменили на другом устройстве"), { paths: clashed.map(l => l.path) });
           }
+          this.retire(mine);
           this.status = "live";
           this.error = "";
           this.emit();
@@ -242,6 +283,7 @@ export class Data extends EventTarget {
           await this.flush();
           await this.store.commit(changes, message);
           this.adopt();
+          this.retire(changes);
           this.status = "live";
           this.error = "";
           this.emit();
@@ -249,15 +291,14 @@ export class Data extends EventTarget {
         } catch (e) {
           this.adopt();
           if (e.code === "clash") {
-            const next = round < 3 && changes.map(c => (e.paths.includes(c.path) ? this.rebase(c) : c));
+            const next = round < 3 && changes.map(c => (!e.paths.includes(c.path) ? c : c.overwrite ? Object.assign({}, c, { baseOid: this.oids[c.path] || null }) : this.rebase(c)));
             if (next && next.every(Boolean)) { changes = next; continue; }
             const c = changes.find(x => e.paths.includes(x.path) && x.patch), remote = c && this.docOf(c.path);
             if (remote) e.theirs = overlap(remote, c).map(k => [k, getK(remote, k)]);
             this.emit(); throw e;
           }
           if (!QUEUE.includes(e.code)) { this.fail(e); this.emit(); throw e; }
-          changes.forEach(c => this.pending.push(Object.assign({ message }, c)));
-          local.set("pending", this.pending);
+          this.hold(changes, message, e);
           if (e.code === "offline") this.status = "pending"; else this.fail(e);
           this.emit();
           return "queued";
@@ -281,13 +322,13 @@ export class Data extends EventTarget {
     return this.write([{ path: pathOf("places", doc.id), content: serialize(doc), baseOid: isNew ? null : baseOid || this.oidOf("places", doc.id) }], `${isNew ? "Add" : "Update"} place ${doc.id}`).then(r => ({ r, doc }));
   }
 
-  saveRating(rating, { extra = [], isNew = !rating.id, baseOid, questions } = {}) {
+  saveRating(rating, { extra = [], isNew = !rating.id, baseOid, questions, patch, was } = {}) {
     const now = new Date().toISOString();
     const doc = Object.assign({}, rating, { id: rating.id || uid("r"), updatedAt: rating.updatedAt || now, createdAt: rating.createdAt || now, deleted: false });
     const base = isNew ? null : baseOid || this.oidOf("ratings", doc.id);
     const make = () => {
       const q = questions && this.view().places.find(p => p.id === doc.place);
-      return extra.concat(q ? [this.placeChange(q, {}, { questions })] : [], [{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: base }]);
+      return extra.concat(q ? [this.placeChange(q, {}, { questions })] : [], [Object.assign({ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: base }, !isNew && patch ? { patch, base: was || {} } : {})]);
     };
     return this.write(make, `${isNew ? "Add" : "Update"} rating ${doc.id}`).then(r => ({ r, doc }));
   }
@@ -308,10 +349,27 @@ export class Data extends EventTarget {
 
   deleteRating(rating, baseOid) {
     const doc = Object.assign({}, rating, { deleted: true, updatedAt: new Date().toISOString() });
-    return this.write([{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: baseOid || this.oidOf("ratings", doc.id) }], `Delete rating ${doc.id}`);
+    return this.write([{ path: pathOf("ratings", doc.id), content: serialize(doc), baseOid: baseOid || this.oidOf("ratings", doc.id), patch: { deleted: true }, base: { deleted: rating.deleted == null ? null : rating.deleted } }], `Delete rating ${doc.id}`);
   }
 
   get lost() { return local.get("lost", []); }
+
+  get queued() { return new Set(this.pending.map(c => c.message || c.path)).size; }
+
+  retire(changes) {
+    const l = this.lost;
+    const out = l.map(x => {
+      const c = changes.find(y => y.path === x.path);
+      if (!c) return x;
+      if (!c.patch || !x.patch) return null;
+      const left = Object.keys(x.patch).filter(k => !(k in c.patch));
+      if (!left.length && !Object.keys(x.add || {}).length) return null;
+      return Object.assign({}, x, { patch: pick(x.patch, left), base: pick(x.base, left) });
+    }).filter(Boolean);
+    if (JSON.stringify(out) === JSON.stringify(l)) return;
+    local.set("lost", out);
+    if (!out.length) this.notice = "";
+  }
 
   dropLost(i) {
     const l = this.lost;
@@ -327,7 +385,8 @@ export class Data extends EventTarget {
     return this.write(() => {
       const remote = (item.patch || item.add) && this.docOf(item.path);
       const content = remote ? serialize(Object.assign(patchDoc(remote, item.patch, item.add), { updatedAt: new Date().toISOString() })) : item.content;
-      return [{ path: item.path, content, baseOid: this.oids[item.path] || null }];
+      const was = remote && item.patch ? Object.fromEntries(Object.keys(item.patch).map(k => [k, getK(remote, k)])) : null;
+      return [Object.assign({ path: item.path, content, baseOid: this.oids[item.path] || null }, was ? { patch: item.patch, base: was, add: item.add || null } : {})];
     }, (item.message || "Apply") + " (повтор)").then(r => {
       const j = this.lost.findIndex(l => l.path === item.path && l.at === item.at);
       if (j >= 0) this.dropLost(j);
@@ -338,7 +397,8 @@ export class Data extends EventTarget {
   saveWeights(who, w) {
     const id = slug(who);
     const doc = { id, who, w, updatedAt: new Date().toISOString() };
-    return this.write([{ path: pathOf("weights", id), content: serialize(doc) }], `Update weights ${id}`);
+    const path = pathOf("weights", id), queued = this.pending.find(c => c.path === path);
+    return this.write([{ path, content: serialize(doc), baseOid: queued ? queued.baseOid : this.oids[path] || null, overwrite: true }], `Update weights ${id}`);
   }
 
   placeChange(place, patch, add, base) {

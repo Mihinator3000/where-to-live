@@ -362,7 +362,7 @@ test("a group comment says what to write and shows with her trip in the dossier 
 
 test("each «+ комментарий» button says which topic it is about, so the buttons are not eight identical links", { skip }, async () => {
   await asVika();
-  const names = await page.eval(`[...document.querySelectorAll("[data-addnote]")].filter(b => !b.closest("[hidden]")).map(b => ({ group: b.closest("[data-group]").querySelector("h3").firstChild.textContent.trim(), name: (b.getAttribute("aria-label") || b.innerText).trim() }))`);
+  const names = await page.eval(`[...document.querySelectorAll("[data-addnote]")].filter(b => !b.closest("[hidden]")).map(b => ({ group: b.closest("[data-group]").querySelector("h2").firstChild.textContent.trim(), name: (b.getAttribute("aria-label") || b.innerText).trim() }))`);
   assert.ok(names.length >= 6, "comment buttons on screen: " + names.length);
   const vague = names.filter(n => !n.name.includes(n.group));
   assert.deepEqual(vague.map(n => `${n.group}: «${n.name}»`), []);

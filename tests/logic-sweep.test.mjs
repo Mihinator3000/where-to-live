@@ -175,7 +175,7 @@ test("SPb is exactly 3 on every everyday group whatever world data says, has no 
   assert.equal(M.finalCat(BASE, "стихии"), 3);
   assert.deepEqual(M.catFlags(BASE, "шум"), [], "a stray low score on SPb is not a red flag");
   assert.equal(M.ranksFor(EQUAL).base, undefined);
-  assert.match(rowOf(rankHTML(M, EQUAL), "Город-база"), /3\.0 по определению/);
+  assert.match(rowOf(rankHTML(M, EQUAL), "Город-база"), /3\.0 всегда/);
 });
 
 test("weights: saved weights become that person's preset, «Оба» averages both, and all-zero weights fall back to equal instead of dividing by zero", () => {

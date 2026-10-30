@@ -669,7 +669,7 @@ test("an edit in progress survives a reload and is still saved as the same ratin
 test("after a clash, reopening the rating from the dossier shows the newer version and saving works", { skip }, async () => {
   await fresh({ hash: "#/place/porto" });
   await openEdit("porto");
-  await otherDevice("ratings/r1.json", `d => { d.review = "Изменено на телефоне"; }`);
+  await otherDevice("ratings/r1.json", `d => { d.review = "Изменено на телефоне"; d.scores["интернет"] = 3; }`);
   await score("интернет", 2);
   await press("#fSave");
   await page.waitFor(`document.getElementById("fMsg").innerText`, 6000, "clash message");
@@ -716,7 +716,7 @@ test("answering «Кто вы» on the rate screen keeps the place I picked", { 
 test("a clash is explained in plain words, not as a connection error or a file path", { skip }, async () => {
   await fresh({ hash: "#/place/porto" });
   await openEdit("porto");
-  await otherDevice("ratings/r1.json", `d => { d.year = 2; }`);
+  await otherDevice("ratings/r1.json", `d => { d.year = 2; d.scores["интернет"] = 3; }`);
   await score("интернет", 2);
   await press("#fSave");
   await page.waitFor(`document.getElementById("fMsg").innerText`, 6000, "clash message");

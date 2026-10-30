@@ -4,7 +4,7 @@ export const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, ch => ({ 
 
 export const local = {
   get(k, d) { try { const v = localStorage.getItem("wtl:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem("wtl:" + k, JSON.stringify(v)); } catch (e) {} },
+  set(k, v) { try { localStorage.setItem("wtl:" + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem("wtl:" + k); } catch (e) {} },
 };
 
@@ -28,7 +28,7 @@ export function toast(text) {
   t.textContent = text;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, Math.max(3500, Math.min(9000, String(text).length * 60)));
+  toastTimer = setTimeout(() => { t.hidden = true; t.textContent = ""; }, Math.max(3500, Math.min(9000, String(text).length * 60)));
 }
 
 export const todayISO = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -43,7 +43,9 @@ export function daysBetween(a, b) {
 
 export function scoreColor(v) {
   if (!Number.isFinite(v)) return "var(--none)";
-  const d = Math.max(-1, Math.min(1, (v - 3) / 2));
+  const t = Math.round(v * 10) / 10;
+  if (t === 3) return "var(--mid)";
+  const d = Math.max(-1, Math.min(1, (t - 3) / 2));
   const pole = d >= 0 ? "var(--pos)" : "var(--neg)";
   return `color-mix(in oklab, ${pole} ${Math.round(25 + Math.abs(d) * 75)}%, var(--mid))`;
 }
@@ -63,7 +65,9 @@ export const pal = () => palette || refreshPalette();
 export function scoreHex(v) {
   const p = pal();
   if (!Number.isFinite(v)) return p.none;
-  const d = Math.max(-1, Math.min(1, (v - 3) / 2));
+  const t = Math.round(v * 10) / 10;
+  if (t === 3) return p.mid;
+  const d = Math.max(-1, Math.min(1, (t - 3) / 2));
   return mixHex(p.mid, d >= 0 ? p.pos : p.neg, 0.25 + Math.abs(d) * 0.75);
 }
 
@@ -73,6 +77,8 @@ export const inkOn = h => { const l = lumHex(h) + 0.05; return 1.05 / l >= l / 0
 export function heatHex(v) {
   const p = pal();
   if (!Number.isFinite(v)) return p.none;
-  const d = Math.max(-1, Math.min(1, (v - 3) / 2));
+  const t = Math.round(v * 10) / 10;
+  if (t === 3) return p.mid;
+  const d = Math.max(-1, Math.min(1, (t - 3) / 2));
   return mixHex(p.mid, d >= 0 ? p.pos : p.neg, Math.abs(d));
 }

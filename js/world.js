@@ -17,8 +17,8 @@ export const CITY_INDICATORS = [
   { key: "tn_jan", name: "Январь, ночной минимум °C", short: "Ночи января", group: "climate", unit: "°C", fmt: 1, dir: 0, cats: [], get: c => c.tn1 ?? null },
   { key: "t_jul", name: "Июль, средняя °C", short: "Июль", group: "climate", unit: "°C", fmt: 1, dir: 0, cats: [], get: c => (okArr(c.t) ? c.t[6] : null) },
   { key: "tx_jul", name: "Июль, дневной максимум °C", short: "Жара июля", group: "climate", unit: "°C", fmt: 1, dir: -1, scale: { type: "abs", points: [[24, 3], [27, 2.75], [30, 2.25], [33, 1.75], [36, 1]] }, cats: [], get: c => c.tx },
-  { key: "tn_jul", name: "Июль, ночной минимум °C", short: "Ночи июля", group: "climate", unit: "°C", fmt: 1, dir: -1, scale: { type: "abs", points: [[17, 3], [20, 2.5], [22, 2], [24, 1.5], [26, 1]] }, cats: ["лето"], note: "от 20 °C — душные ночи, без кондиционера плохо спится", get: c => c.tn ?? null },
-  { key: "warm", name: "Месяцев со средней ≥ 18 °C", short: "Тёплых мес.", group: "climate", unit: "мес", fmt: 0, dir: 0, cats: [], get: c => (okArr(c.t) ? c.t.filter(v => v >= 18).length : null) },
+  { key: "tn_jul", name: "Июль, ночной минимум °C", short: "Ночи июля", group: "climate", unit: "°C", fmt: 1, dir: -1, scale: { type: "abs", points: [[17, 3], [20, 2.5], [22, 2], [24, 1.5], [26, 1]] }, cats: ["лето"], note: "от 20 °C — душные ночи, без кондиционера плохо спится", get: c => c.tn ?? null },
+  { key: "warm", name: "Месяцев со средней ≥ 18 °C", short: "Тёплых мес.", group: "climate", unit: "мес", fmt: 0, dir: 0, cats: [], get: c => (okArr(c.t) ? c.t.filter(v => v >= 18).length : null) },
   { key: "rain", name: "Осадки за год, мм", short: "Осадки", group: "climate", unit: "мм", fmt: 0, dir: 0, cats: [], note: "модель, у моря и в горах часто завышена", get: c => (okArr(c.p) ? sum(c.p) : null) },
   { key: "cloud_win", name: "Облачность ноябрь–февраль, %", short: "Тучи зимой", group: "climate", unit: "%", fmt: 0, dir: -1, scale: { type: "lin", step: 8 }, cats: ["свет"], get: c => (okArr(c.c) ? (c.c[10] + c.c[11] + c.c[0] + c.c[1]) / 4 : null) },
   { key: "day_dec", name: "Световой день 21 декабря, ч", short: "Свет 21.12", group: "climate", unit: "ч", fmt: 1, dir: 1, scale: { type: "lin", step: 1.5 }, cats: ["свет"], get: c => (c.lat == null ? null : daylight(c.lat)) },
@@ -69,35 +69,41 @@ export class World {
     this.citiesPromise = null;
     this.generated = "";
     this.citySource = "";
+    this.missing = [];
+    this.citiesFailed = false;
   }
 
   async load() {
-    const [ind, geo] = await Promise.all([
-      fetch("data/world/indicators.json").then(r => (r.ok ? r.json() : null)).catch(() => null),
-      fetch("data/world/countries.geojson").then(r => (r.ok ? r.json() : null)).catch(() => null),
-    ]);
+    const get = url => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
+    this.geoReady = get("data/world/countries.geojson").then(geo => this.setGeo(geo));
+    const ind = await get("data/world/indicators.json");
+    if (!ind) this.missing.push("indicators");
     if (ind) {
       this.indicators = ind.indicators || [];
       this.countries = ind.countries || {};
       this.generated = ind.generated || "";
     }
-    if (geo) {
-      this.geo = geo;
-      geo.features.forEach(f => {
-        const p = f.properties;
-        if (!this.names[p.iso3]) this.names[p.iso3] = p.name_ru || p.name;
-        if (!this.enNames[p.iso3]) this.enNames[p.iso3] = p.name;
-        if (p.iso2) this.iso2[p.iso2.toUpperCase()] = p.iso3;
-      });
-    }
     this.IND = Object.fromEntries(this.indicators.map(i => [i.key, i]));
     this.CIND = Object.fromEntries(CITY_INDICATORS.map(i => [i.key, i]));
   }
 
+  setGeo(geo) {
+    if (!geo || !Array.isArray(geo.features)) { this.missing.push("borders"); return; }
+    this.geo = geo;
+    geo.features.forEach(f => {
+      const p = f.properties;
+      if (!this.names[p.iso3]) this.names[p.iso3] = p.name_ru || p.name;
+      if (!this.enNames[p.iso3]) this.enNames[p.iso3] = p.name;
+      if (p.iso2) this.iso2[p.iso2.toUpperCase()] = p.iso3;
+    });
+  }
+
   loadCities() {
     if (!this.citiesPromise) {
-      this.citiesPromise = fetch("data/world/cities.json").then(r => (r.ok ? r.json() : { cities: [] })).catch(() => ({ cities: [] })).then(d => {
-        this.cities = d.cities || [];
+      this.citiesPromise = fetch("data/world/cities.json").then(r => (r.ok ? r.json() : null)).catch(() => null).then(d => {
+        this.citiesFailed = !d || !Array.isArray(d.cities);
+        d = d || {};
+        this.cities = Array.isArray(d.cities) ? d.cities : [];
         this.citySource = d.source || "";
         this.spbCity = this.nearestCity(SPB, 40);
         return this.cities;

@@ -16,7 +16,9 @@ export function factScore(F, x, ref) {
 }
 
 export function parseAmount(raw) {
-  let s = String(raw).replace(/евро|eur/gi, "").replace(/[\s €$₽]/g, "");
+  let s = String(raw).replace(/евро|eur/gi, "").replace(/[€$₽]/g, "").trim();
+  if (/^\d{1,3}(\s\d{3})+([.,]\d+)?$/.test(s)) s = s.replace(/\s/g, "");
+  if (!/^\+?[\d.,]*\d[\d.,]*$/.test(s)) return NaN;
   if (/^[1-9]\d{0,2}([.,]\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
   else if (s.includes(".") && s.includes(",")) { const i = Math.max(s.lastIndexOf("."), s.lastIndexOf(",")); s = s.slice(0, i).replace(/[.,]/g, "") + "." + s.slice(i + 1); }
   else s = s.replace(",", ".");

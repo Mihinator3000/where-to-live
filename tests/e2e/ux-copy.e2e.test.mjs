@@ -381,7 +381,7 @@ test("a trip in the dossier names the season and the work mode with the same wor
 
 test("the last card of the rating form is not titled «Итог», the word the app uses for the computed score", { skip }, async () => {
   await open({ files: SMALL, hash: "#/rate" });
-  const title = await page.eval(`document.querySelector("[data-year]").closest(".fcard").querySelector("h3").innerText.trim()`);
+  const title = await page.eval(`document.querySelector("[data-year]").closest(".fcard").querySelector("h2").innerText.trim()`);
   assert.notEqual(title, "Итог", "the year, review and veto card is called «Итог» while «Итог» everywhere else is the 1–5 total");
 });
 

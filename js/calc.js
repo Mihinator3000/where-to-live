@@ -8,6 +8,8 @@ export const GEN = { "Михаил": "Михаила", "Вика": "Вики" };
 export const gen = w => GEN[w] || w;
 export const mean = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
 export const fmt = v => (!Number.isFinite(v) ? "—" : (Math.round(v * 10) / 10).toFixed(1));
+export const tenth = v => Math.round(v * 10);
+export const byScore = (sa, sb, a, b) => Math.round(((sb == null ? -9 : sb) - (sa == null ? -9 : sa)) * 1e9) || String(a.name).localeCompare(String(b.name), "ru") || String(a.id).localeCompare(String(b.id));
 
 export function normalize(groups, w) {
   const val = k => Math.max(0, Number(w && w[k]) || 0);
@@ -33,12 +35,14 @@ export function createModel(schema, data, opts = {}) {
   const tidy = p => { const name = String(p.name == null ? "" : p.name).trim() || `Без названия (${p.id})`, lat = coord(p.lat), lon = coord(p.lon); return name === p.name && lat === p.lat && lon === p.lon ? p : Object.assign({}, p, { name }, lat == null || lon == null ? { lat: null, lon: null } : { lat, lon }); };
   const places = latest((data.places || []).filter(Boolean)).filter(p => !p.deleted).map(tidy);
   const ids = new Set(places.map(p => p.id));
-  const ratings = latest((data.ratings || []).filter(Boolean)).filter(r => !r.deleted && r.place && PEOPLE.includes(r.who) && ids.has(r.place));
+  const ratings = latest((data.ratings || []).filter(Boolean)).filter(r => !r.deleted && r.place && PEOPLE.includes(r.who) && ids.has(r.place)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
   const PLACE = Object.fromEntries(places.map(p => [p.id, p]));
-  const cache = new Map();
+  const BY = {};
+  ratings.forEach(r => (BY[r.place] = BY[r.place] || []).push(r));
+  const cache = new Map(), ranges = new Map();
 
   const isBase = p => p.status === "база";
-  const ratingsOf = id => ratings.filter(r => r.place === id);
+  const ratingsOf = id => (BY[id] || []).slice();
 
   const EQUAL = normalize(GROUPS, {});
   const presets = { "Поровну": EQUAL };
@@ -56,8 +60,8 @@ export function createModel(schema, data, opts = {}) {
     const k = id + "|" + who + "|" + key;
     if (cache.has(k)) return cache.get(k);
     let s = 0, w = 0;
-    ratings.forEach(r => {
-      if (r.place === id && r.who === who && r.scores && num(r.scores[key])) { const x = rw(r); s += Number(r.scores[key]) * x; w += x; }
+    (BY[id] || []).forEach(r => {
+      if (r.who === who && r.scores && num(r.scores[key])) { const x = rw(r); s += Number(r.scores[key]) * x; w += x; }
     });
     const v = w ? s / w : null;
     cache.set(k, v);
@@ -71,9 +75,9 @@ export function createModel(schema, data, opts = {}) {
   }
 
   function extCat(p, key, src) {
-    const e = (p.ext && p.ext[key]) || {};
-    const res = e.res == null ? null : e.res;
-    const dat = e.data != null ? e.data : autoData(p, key);
+    const e = (p.ext && p.ext[key]) || {}, ok = v => (num(v) ? Number(v) : null);
+    const res = ok(e.res);
+    const dat = ok(e.data) != null ? ok(e.data) : autoData(p, key);
     if (src === "res") return res;
     if (src === "data") return dat;
     return mean([res, dat].filter(v => v != null));
@@ -113,22 +117,30 @@ export function createModel(schema, data, opts = {}) {
     return { score: w ? s / w : null, coverage: all ? w / all : 0 };
   }
 
-  const ownShare = id => (STAR_KEYS.length ? STAR_KEYS.filter(k => PEOPLE.some(w => personCat(id, w, k) != null)).length / STAR_KEYS.length : 0);
+  const shares = new Map();
+  const ownShare = id => { if (!shares.has(id)) shares.set(id, STAR_KEYS.length ? STAR_KEYS.filter(k => PEOPLE.some(w => personCat(id, w, k) != null)).length / STAR_KEYS.length : 0); return shares.get(id); };
   const ownEnough = id => ownShare(id) >= MIN_OWN;
 
   const vetoes = () => ratings.filter(r => r.veto);
-  const vetoed = p => ratings.some(r => r.place === p.id && r.veto);
+  const vetoed = p => (BY[p.id] || []).some(r => r.veto);
   const candidates = () => places.filter(p => p.status !== "отсев" && !isBase(p) && !vetoed(p));
 
+  let pool = null;
   function ranksFor(W) {
-    const list = candidates().filter(p => ownEnough(p.id)).map(p => ({ p, t: total(p, W, "final") })).filter(x => x.t.score != null && x.t.coverage >= MIN_COVERAGE);
-    list.sort((a, b) => b.t.score - a.t.score);
+    const list = (pool ||= candidates().filter(p => ownEnough(p.id))).map(p => ({ p, t: total(p, W, "final") })).filter(x => x.t.score != null && x.t.coverage >= MIN_COVERAGE);
+    list.sort((a, b) => byScore(a.t.score, b.t.score, a.p, b.p));
     const r = {};
     list.forEach((x, i) => { r[x.p.id] = i + 1; });
     return r;
   }
 
   function rankRange(W) {
+    const key = JSON.stringify(W);
+    if (!ranges.has(key)) ranges.set(key, rangeOf(W));
+    return ranges.get(key);
+  }
+
+  function rangeOf(W) {
     const runs = [ranksFor(W)];
     GROUPS.forEach(g => [0.8, 1.2].forEach(f => {
       const w2 = Object.assign({}, W); w2[g.key] = (W[g.key] || 0) * f; runs.push(ranksFor(w2));
@@ -143,14 +155,14 @@ export function createModel(schema, data, opts = {}) {
   }
 
   function latestYear(id, who) {
-    const rs = ratings.filter(r => r.place === id && r.who === who && r.year != null);
+    const rs = (BY[id] || []).filter(r => r.who === who && r.year != null);
     if (!rs.length) return null;
     rs.sort((a, b) => String(b.end || b.start || "").localeCompare(String(a.end || a.start || "")) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     return rs[0].year;
   }
 
   function confOf(id, who, key) {
-    const rs = ratings.filter(r => r.place === id && r.who === who && r.scores && num(r.scores[key]));
+    const rs = (BY[id] || []).filter(r => r.who === who && r.scores && num(r.scores[key]));
     if (!rs.length) return "";
     const c = rs.map(r => (r.conf && r.conf[key]) || "B").sort();
     const worst = c[c.length - 1];
@@ -161,36 +173,38 @@ export function createModel(schema, data, opts = {}) {
     if (isBase(p)) return [];
     const out = [];
     const per = PEOPLE.map(w => personCat(p.id, w, key));
-    const low = per.map((v, i) => [PEOPLE[i], v]).filter(([, v]) => v != null && v <= 1.5);
+    const low = per.map((v, i) => [PEOPLE[i], v]).filter(([, v]) => v != null && tenth(v) <= 15);
     if (low.length === 1) out.push({ sev: "crit", short: "≤1.5", text: `${low[0][0]} ставит ${fmt(low[0][1])}` });
     else if (low.length > 1) out.push({ sev: "crit", short: "≤1.5", text: low.every(([, v]) => fmt(v) === fmt(low[0][1])) ? `${low.map(x => x[0]).join(" и ")} ставят ${fmt(low[0][1])}` : low.map(([w, v]) => `${w} ${fmt(v)}`).join(", ") });
-    if (per.every(v => v != null) && Math.abs(per[0] - per[1]) >= 1.5) out.push({ sev: "serious", short: "разногласие", text: `${PEOPLE[0]} ${fmt(per[0])}, ${PEOPLE[1]} ${fmt(per[1])}` });
+    if (per.every(v => v != null) && Math.abs(tenth(per[0]) - tenth(per[1])) >= 15) out.push({ sev: "serious", short: "разногласие", text: `${PEOPLE[0]} ${fmt(per[0])}, ${PEOPLE[1]} ${fmt(per[1])}` });
     const us = usCat(p.id, key), res = extCat(p, key, "res");
     if (us != null && res != null) {
-      if (us - res >= 1.5) out.push({ sev: "warn", short: "иллюзия туриста", text: `мы ${fmt(us)}, живущие ${fmt(res)}` });
-      if (res - us >= 1.5) out.push({ sev: "info", short: "недооценили", text: `мы ${fmt(us)}, живущие ${fmt(res)}` });
+      if (tenth(us) - tenth(res) >= 15) out.push({ sev: "warn", short: "иллюзия туриста", text: `мы ${fmt(us)}, живущие ${fmt(res)}` });
+      if (tenth(res) - tenth(us) >= 15) out.push({ sev: "info", short: "недооценили", text: `мы ${fmt(us)}, живущие ${fmt(res)}` });
     }
     return out;
   }
 
+  let flagList = null;
   function allFlags() {
+    if (flagList) return flagList;
     const order = { crit: 0, serious: 1, warn: 2, info: 3 };
-    const out = [];
-    vetoes().forEach(r => out.push({ sev: "crit", place: r.place, head: `${(PLACE[r.place] || {}).name}: вето — ${r.who}`, text: r.veto }));
-    places.forEach(p => CATS.forEach(c => catFlags(p, c.key).forEach(f => out.push({ sev: f.sev, place: p.id, head: `${p.name}: ${c.name}`, text: f.text }))));
+    const out = flagList = [];
+    vetoes().forEach(r => out.push({ sev: "crit", place: r.place, head: `${(PLACE[r.place] || {}).name}: вето — ${r.who}`, what: `вето — ${r.who}`, text: r.veto }));
+    places.forEach(p => CATS.forEach(c => catFlags(p, c.key).forEach(f => out.push({ sev: f.sev, place: p.id, head: `${p.name}: ${c.name}`, what: c.name, text: f.text }))));
     out.sort((a, b) => order[a.sev] - order[b.sev]);
     return out;
   }
 
-  function ranking(W) {
-    const range = rankRange(W);
+  function ranking(W, fast) {
+    const range = fast ? {} : rankRange(W);
     const rows = candidates().map(p => {
       const t = total(p, W, "final");
       const per = {};
       PEOPLE.forEach(w => { per[w] = total(p, W, w).score; });
       return { p, t, per, range: range[p.id] || null };
     });
-    rows.sort((a, b) => (b.t.score == null ? -9 : b.t.score) - (a.t.score == null ? -9 : a.t.score));
+    rows.sort((a, b) => byScore(a.t.score, b.t.score, a.p, b.p));
     return {
       rated: rows.filter(r => r.t.score != null && r.t.coverage >= MIN_COVERAGE),
       thin: rows.filter(r => r.t.score != null && r.t.coverage < MIN_COVERAGE),

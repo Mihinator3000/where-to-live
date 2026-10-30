@@ -333,7 +333,7 @@ test("with no data at all every screen helper still works and says there is noth
   const M = createModel(schema, {});
   const r = M.ranking(EQUAL);
   assert.deepEqual([r.rated.length, r.thin.length, r.unrated.length, r.base.length, r.out.length], [0, 0, 0, 0, 0]);
-  assert.match(text(rankHTML(M, EQUAL)), /Своих оценок пока нет/);
+  assert.match(text(rankHTML(M, EQUAL)), /Мест пока нет/);
   assert.match(text(placesListHTML(M, EQUAL, "")), /Мест пока нет/);
   assert.match(text(flagsHTML(M).html), /Флагов нет/);
 });

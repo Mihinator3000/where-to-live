@@ -6,8 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https://api.github.com https://nominatim.openstreetmap.org; font-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<meta name="theme-color" content="#f1f3f4" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0f1113" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fdfdfd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181b1e" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Где жить">
@@ -19,10 +19,26 @@
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/fonts.css">
 <link rel="stylesheet" href="css/app.css">
-<script defer src="vendor/leaflet/leaflet.js"></script>
+<script defer src="js/boot.js"></script>
+<link rel="preload" href="schema.json" as="fetch" crossorigin="anonymous">
+<link rel="preload" href="data/world/indicators.json" as="fetch" crossorigin="anonymous">
+<link rel="modulepreload" href="js/app.js">
+<link rel="modulepreload" href="js/calc.js">
+<link rel="modulepreload" href="js/data.js">
+<link rel="modulepreload" href="js/facts.js">
+<link rel="modulepreload" href="js/form.js">
+<link rel="modulepreload" href="js/geo.js">
+<link rel="modulepreload" href="js/map.js">
+<link rel="modulepreload" href="js/similar.js">
+<link rel="modulepreload" href="js/store.js">
+<link rel="modulepreload" href="js/util.js">
+<link rel="modulepreload" href="js/views.js">
+<link rel="modulepreload" href="js/world.js">
 <script type="module" src="js/app.js"></script>
+<script defer src="vendor/leaflet/leaflet.js"></script>
 </head>
 <body>
+<a class="skip" href="#main" id="skipLink">Перейти к содержимому</a>
 <header class="appbar">
   <a class="brand" href="#/map">Где жить</a>
   <nav class="tabs" aria-label="Разделы">
@@ -32,26 +48,29 @@
     <a href="#/rate" data-nav="rate">Оценить</a>
   </nav>
   <div class="appbar-tools">
-    <button type="button" class="sync" id="syncBtn" title="Обновить данные" aria-labelledby="syncAction syncText"><span id="syncAction" hidden>Обновить данные:</span><i class="dot" id="syncDot"></i><span id="syncText">…</span></button>
+    <button type="button" class="sync" id="syncBtn" title="Обновить данные" aria-labelledby="syncAction syncText"><span id="syncAction" hidden>Обновить данные:</span><i class="dot" id="syncDot"></i><span id="syncText">…</span></button><span class="sr-only" id="syncLive" aria-live="polite"></span>
     <button type="button" class="iconbtn" id="themeBtn" aria-label="Тема: авто" title="Тема"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
     <a class="iconbtn" href="#/settings" data-nav="settings" aria-label="Настройки" title="Настройки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></a>
   </div>
 </header>
 
 <main id="main">
+  <div class="page" id="bootNote"><p class="muted">Загружаю приложение…</p></div>
   <section class="view map-view" id="v-map" hidden>
-    <div id="map" aria-label="Карта"></div>
+    <h1 class="sr-only" tabindex="-1">Карта</h1>
     <div class="map-top">
       <form class="search" id="searchForm" role="search">
         <input type="search" id="searchInput" placeholder="Найти город или место" autocomplete="off" enterkeyhint="search" aria-label="Поиск места">
         <div class="search-results" id="searchResults" hidden></div>
+        <div class="sr-only" id="searchStatus" aria-live="polite"></div>
       </form>
       <button type="button" class="chipbtn" id="layersBtn" aria-expanded="false" aria-controls="layersPanel">Слои</button>
     </div>
     <div class="map-note small" id="mapNote" hidden></div>
     <div class="layers panel" id="layersPanel" hidden></div>
+    <div id="map" aria-label="Карта"></div>
     <div class="legend-box" id="legendBox" hidden></div>
-    <div class="sheet" id="sheet" hidden>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="false" aria-labelledby="sheetTitle" hidden>
       <button type="button" class="sheet-grip" id="sheetGrip" aria-label="Свернуть или развернуть"></button>
       <button type="button" class="sheet-close" id="sheetClose" aria-label="Закрыть">×</button>
       <div class="sheet-body" id="sheetBody"></div>
@@ -73,7 +92,8 @@
 </nav>
 
 <div id="tip" hidden></div>
-<div id="toast" role="status" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="updateBar" class="update-bar" role="status" hidden><span>Вышла новая версия приложения. Обновить — займёт секунду, черновики и очередь сохранятся.</span><button type="button" class="btn small" id="updateBtn">Обновить</button></div>
 <noscript>Нужен JavaScript.</noscript>
 </body>
 </html>

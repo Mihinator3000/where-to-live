@@ -1,4 +1,4 @@
-import { esc, plural } from "./util.js";
+import { esc, plural, reducedMotion } from "./util.js";
 
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://www.naturalearthdata.com/">Natural Earth</a>';
@@ -9,9 +9,9 @@ export class MapView {
     this.L = L;
     this.hooks = hooks;
     const touch = matchMedia("(pointer: coarse)").matches;
-    this.map = L.map(el, { zoomControl: !touch, attributionControl: false, worldCopyJump: true, minZoom: 2, maxZoom: 17, zoomSnap: 1, tapTolerance: 12 });
+    this.map = L.map(el, { zoomControl: false, attributionControl: false, worldCopyJump: true, minZoom: 2, maxZoom: 17, zoomSnap: 1, tapTolerance: 12 });
     L.control.attribution({ position: "bottomright", prefix: false }).addAttribution(ATTR).addTo(this.map);
-    if (!touch) this.map.zoomControl.setPosition("bottomright");
+    if (!touch) L.control.zoom({ position: "bottomright", zoomInTitle: "Приблизить", zoomOutTitle: "Отдалить" }).addTo(this.map);
     this.tiles = L.tileLayer(TILES, { maxZoom: 19, crossOrigin: false, className: "basemap" }).addTo(this.map);
     this.map.createPane("countries").style.zIndex = 350;
     this.map.createPane("cities").style.zIndex = 450;
@@ -87,9 +87,9 @@ export class MapView {
     m.bindTooltip(esc(p.base ? p.name + " · база, 3" : p.name), { permanent: true, direction: "right", offset: [size / 2, 0], className: "pin-label" });
     m.isBase = !!p.base;
     m.on("click", e => { if (e.originalEvent) e.originalEvent._handled = true; this.hooks.onPlace(p.id); });
-    this.onKey(m, () => this.hooks.onPlace(p.id));
+    this.onKey(m, () => this.hooks.onPlace(p.id, true));
     m.addTo(this.placeLayer);
-    m.getElement().setAttribute("aria-label", p.name + (p.base ? ", база" : p.text ? ", итог " + p.text : ""));
+    m.getElement().setAttribute("aria-label", p.name + (p.base ? ", база" : p.text ? ", итог " + p.text : "") + (p.why ? ", " + p.why : p.thin ? ", мало своих оценок, пока не в рейтинге" : ""));
     this.markers[p.id] = m;
   }
 
@@ -102,8 +102,9 @@ export class MapView {
     const open = () => {
       const b = L.latLngBounds(items.map(p => [p.lat, p.lon]));
       const z = this.map.getZoom();
-      if (b.getNorthEast().equals(b.getSouthWest())) this.map.flyTo(b.getCenter(), Math.min(z + 3, 14));
-      else this.map.flyToBounds(b, { padding: [70, 70], maxZoom: Math.max(z + 2, 9), duration: 0.6 });
+      const still = reducedMotion();
+      if (b.getNorthEast().equals(b.getSouthWest())) this.map[still ? "setView" : "flyTo"](b.getCenter(), Math.min(z + 3, 14), still ? { animate: false } : {});
+      else this.map[still ? "fitBounds" : "flyToBounds"](b, { padding: [70, 70], maxZoom: Math.max(z + 2, 9), duration: 0.6, animate: !still });
     };
     m.on("click", e => { if (e.originalEvent) e.originalEvent._handled = true; open(); });
     this.onKey(m, open);
@@ -132,11 +133,12 @@ export class MapView {
     const L = this.L;
     this.cityLayer.clearLayers();
     if (!list) return;
+    const ring = getComputedStyle(document.documentElement).colorScheme === "dark" ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.45)";
     list.forEach(c => {
       const col = colorFn(c);
       if (!col) return;
       const r = col.r || Math.max(3, Math.min(9, Math.sqrt((c.pop || 20000) / 1e6) * 4.5));
-      const m = L.circleMarker([c.lat, c.lon], { renderer: this.cityCanvas, pane: "countries", radius: r, color: col.stroke || "rgba(0,0,0,0.45)", weight: col.ring ? 2 : 0.8, fillColor: col.fill, fillOpacity: col.ring ? 0 : 0.9 });
+      const m = L.circleMarker([c.lat, c.lon], { renderer: this.cityCanvas, pane: "countries", radius: r, color: col.stroke || ring, weight: col.ring ? 2 : 0.8, fillColor: col.fill, fillOpacity: col.ring ? 0 : 0.9 });
       m.bindTooltip(esc(labelFn(c)), { direction: "top", className: "city-tip", sticky: false });
       m.on("click", e => { e.originalEvent._handled = true; this.hooks.onCity(c); });
       m.addTo(this.cityLayer);
@@ -149,7 +151,8 @@ export class MapView {
     const mobile = innerWidth < 860;
     const off = sheet && !sheet.hidden ? (mobile ? sheet.offsetHeight / 2 : -200) : 0;
     const target = this.map.project([lat, lon], z).add(mobile ? [0, off] : [off, 0]);
-    this.map.flyTo(this.map.unproject(target, z), z, { duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.8 });
+    if (reducedMotion()) this.map.setView(this.map.unproject(target, z), z, { animate: false });
+    else this.map.flyTo(this.map.unproject(target, z), z, { duration: 0.8 });
   }
 
   showTemp(lat, lon) {

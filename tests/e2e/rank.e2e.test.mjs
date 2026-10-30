@@ -124,7 +124,7 @@ test("SPb is shown as the base: no rank number, a «база» chip and exactly 
   assert.equal(s.pos, "—");
   assert.equal(s.score, "3.0");
   assert.deepEqual(s.chips, ["база"]);
-  assert.match(await page.text("#rank"), /по определению/);
+  assert.match(await page.text("#rank"), /3\.0\s*всегда/);
   assert.ok(!(await mainRows()).includes("Санкт-Петербург"));
 });
 
@@ -470,14 +470,14 @@ test("flags list red flags, disagreements and vetoes with a count, most severe f
     ratings: [...DUO.ratings, rating("z1", "zeta", "Михаил", { "шум": 1 }, { veto: "стройка под окном" }), rating("k1", "kappa", "Михаил", { "интернет": 4.5 }), rating("k2", "kappa", "Вика", { "интернет": 2.5 })],
   });
   await open({ files });
-  const flags = await page.eval(`[...document.querySelectorAll(".flags .flag")].map(f => ({ sev: f.querySelector(".sev").className.replace("sev", "").trim(), label: f.querySelector(".sev").innerText, head: f.querySelector("a").innerText, text: f.querySelector("small").innerText, href: f.querySelector("a").getAttribute("href") }))`);
+  const flags = await page.eval(`[...document.querySelectorAll(".flags .flag")].map(f => { let g = f.previousElementSibling; while (g && !g.classList.contains("flag-place")) g = g.previousElementSibling; return { sev: f.querySelector(".sev").className.replace("sev", "").trim(), label: f.querySelector(".sev").innerText, place: g && g.innerText, head: f.querySelector("a").innerText, text: f.querySelector("small").innerText, href: f.querySelector("a").getAttribute("href") }; })`);
   assert.deepEqual(flags, [
-    { sev: "crit", label: "красный флаг", head: "Зета: вето — Михаил", text: "стройка под окном", href: "#/place/zeta" },
-    { sev: "crit", label: "красный флаг", head: "Зета: Шум ночью у жилья", text: "Михаил ставит 1.0", href: "#/place/zeta" },
-    { sev: "serious", label: "разногласие", head: "Каппа: Интернет дома", text: "Михаил 4.5, Вика 2.5", href: "#/place/kappa" },
+    { sev: "crit", label: "красный флаг", place: "Зета", head: "вето — Михаил", text: "стройка под окном", href: "#/place/zeta" },
+    { sev: "crit", label: "красный флаг", place: "Зета", head: "Шум ночью у жилья", text: "Михаил ставит 1.0", href: "#/place/zeta" },
+    { sev: "serious", label: "разногласие", place: "Каппа", head: "Интернет дома", text: "Михаил 4.5, Вика 2.5", href: "#/place/kappa" },
   ]);
   assert.equal(await page.eval(`[...document.querySelectorAll("#v-rank .sec-head")].find(h => /флаги/i.test(h.innerText)).querySelector(".muted").innerText`), "3 флага");
-  await page.tap({ sel: ".flags a", text: "Каппа: Интернет дома" });
+  await page.tap({ sel: ".flags .flag a", text: "Интернет дома" });
   await page.waitFor(`location.hash === "#/place/kappa"`, 3000, "dossier");
 });
 
@@ -525,7 +525,7 @@ test("with only SPb the ranking shows SPb as the base and nothing ranked", { ski
   assert.equal((await rowOf("Санкт-Петербург")).score, "3.0");
   assert.deepEqual(await heatNames(), ["Санкт-Петербург"]);
   await page.goto(srv.url + "#/places", 300);
-  assert.deepEqual(await plist(), [{ name: "Санкт-Петербург", score: "база", meta: ["Россия", "база", "оценок нет"] }]);
+  assert.deepEqual(await plist(), [{ name: "Санкт-Петербург", score: "3.0", meta: ["Россия", "точка отсчёта: с ним сравниваем все места"] }]);
 });
 
 const MANY = (() => {
@@ -581,7 +581,7 @@ test("names and reasons with markup are shown as plain text on the ranking and i
   assert.equal(await page.eval(`document.querySelectorAll("#v-rank img, #v-rank .empty-row b, #v-rank .empty-row i, #v-rank .name b b").length`), 0);
   assert.equal(await page.eval(`document.querySelector('#rank a.row[href="#/place/riga"] .name b').innerText`), odd);
   assert.ok((await heatNames()).includes(odd));
-  assert.match(await page.text(".flags"), /<img src=x>Рига "Старая" & Co: Интернет дома/);
+  assert.match(await page.text(".flags"), /<img src=x>Рига "Старая" & Co\nкрасный флаг\nИнтернет дома/);
   assert.match(await page.text("#rank"), /Отсев <b>жирный<\/b> — <i>курсив<\/i>/);
   await page.goto(srv.url + "#/places", 300);
   assert.equal(await page.eval(`document.querySelectorAll("#v-places img").length`), 0);
@@ -608,7 +608,7 @@ test("each place row shows its score, country, status and how many ratings it ha
   assert.deepEqual(by["Порту"].meta, ["Португалия", "кандидат", "оценок: 2", "год здесь: Михаил 7/10 · Вика 6/10"]);
   assert.deepEqual(by["Батуми"].meta, ["Грузия", "кандидат", "только мировые данные"]);
   assert.deepEqual(by["Тбилиси"].meta, ["Грузия", "кандидат", "оценка Вики скрыта до вашей"]);
-  assert.equal(by["Санкт-Петербург"].score, "база");
+  assert.equal(by["Санкт-Петербург"].score, "3.0");
   assert.equal(by["Зета"].meta[1], "вето", "a vetoed place says so instead of «кандидат»");
 });
 
