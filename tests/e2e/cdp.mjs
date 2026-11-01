@@ -3,12 +3,20 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { beforeEach } from "node:test";
 
 export const CHROME = [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(p => p && existsSync(p));
 const MOCK = readFileSync(new URL("./mock.js", import.meta.url), "utf8");
 const SHOTS = new URL("./shots/", import.meta.url).pathname;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const live = new Set();
+beforeEach(async () => { for (const p of live) await p.viewport(390, 844).catch(() => {}); });
 const freePort = () => new Promise(r => { const s = createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
+
+const procs = new Set();
+const killAll = () => { for (const p of procs) try { p.kill("SIGKILL"); } catch {} };
+process.on("exit", killAll);
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { killAll(); process.exit(128 + (sig === "SIGINT" ? 2 : 15)); });
 
 export async function launch() {
   const port = await freePort();
@@ -19,7 +27,18 @@ export async function launch() {
   if (!targets) { proc.kill(); throw new Error("Chrome did not start"); }
   const page = new Page(targets.find(t => t.type === "page").webSocketDebuggerUrl);
   await page.open();
-  page.close = async () => { try { page.ws.close(); } catch {} proc.kill(); await sleep(200); rmSync(dir, { recursive: true, force: true }); };
+  live.add(page);
+  procs.add(proc);
+  page.close = async () => {
+    live.delete(page);
+    try { page.ws.close(); } catch {}
+    const gone = new Promise(r => (proc.exitCode !== null || proc.signalCode ? r() : proc.once("exit", r)));
+    proc.kill();
+    await Promise.race([gone, sleep(3000)]);
+    if (proc.exitCode === null && !proc.signalCode) { proc.kill("SIGKILL"); await Promise.race([gone, sleep(1000)]); }
+    procs.delete(proc);
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  };
   return page;
 }
 
@@ -58,7 +77,7 @@ export class Page {
   }
 
   async viewport(w, h, opts = {}) {
-    Object.assign(this.vp, { w, h }, opts);
+    Object.assign(this.vp, { w, h, dark: false }, opts);
     const mobile = w < 800;
     await this.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile });
     await this.send("Emulation.setTouchEmulationEnabled", mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });

@@ -26,13 +26,13 @@ const rating = (placeId, who, scores, extra = {}) => Object.assign({ id: "r" + (
 const stars = (keys, v = 4) => Object.fromEntries(keys.map(k => [k, v]));
 const everywhere = v => () => v;
 
-function build(data, { me = "", revealed = [], autoData } = {}) {
+function build(data, { me = "", revealed = [], autoData, anon = false } = {}) {
   const v = { places: data.places || [], ratings: data.ratings || [], weights: data.weights || {} };
   const full = createModel(schema, v, { autoData });
   const hid = new Set(), rev = new Set(revealed);
-  if (me) full.places.forEach(p => {
+  if (me || anon) full.places.forEach(p => {
     const rs = full.ratingsOf(p.id);
-    if (rev.has(p.id) || rs.some(r => r.who === me)) return;
+    if (rev.has(p.id) || (me ? rs.some(r => r.who === me) : full.PEOPLE.every(w => rs.some(r => r.who === w)))) return;
     rs.forEach(r => { if (r.who !== me) hid.add(p.id + "|" + r.who); });
   });
   const M = hid.size ? createModel(schema, Object.assign({}, v, { ratings: v.ratings.filter(r => !hid.has(r.place + "|" + r.who)) }), { autoData }) : full;
@@ -317,7 +317,6 @@ test("the partner's rating of a place stays hidden until I rate it myself", () =
   assert.deepEqual(hiddenWho(M, "alpha"), [PARTNER]);
   const trips = text(tripsHTML(M, a, true, ME));
   assert.match(trips, new RegExp(`${PARTNER}: оценка скрыта`));
-  assert.match(trips, /Показать всё равно/);
   assert.doesNotMatch(trips, /Секретный отзыв/);
   assert.equal(yearsLine(M, "alpha"), "");
   assert.match(text(placesListHTML(M, EQUAL, "")), new RegExp(`оценка ${gen(PARTNER)} скрыта до вашей`));
@@ -343,7 +342,8 @@ test("a hidden partner's red flag is not shown but is counted in «Ещё N»", 
   assert.equal(M.full.allFlags().filter(f => f.sev === "crit").length, 1);
   const f = flagsHTML(M);
   assert.equal(f.count, 0);
-  assert.match(text(f.html), /Ещё 1 флаг скрыт — по местам, которые вы сами пока не оценили/);
+  assert.match(text(f.html), /Флаги по местам, которые вы сами ещё не оценили, появятся после вашей оценки/);
+  assert.doesNotMatch(text(f.html), /Ещё \d+ флаг/);
 });
 
 test("the hidden partner's scores do not move the place's total", () => {
@@ -353,11 +353,16 @@ test("the hidden partner's scores do not move the place's total", () => {
   assert.equal(M.total(M.PLACE.alpha, EQUAL, PARTNER).score, null);
 });
 
-test("when nobody chose who they are on this device nothing is hidden", () => {
-  const M = build(blindData(), { me: "" });
-  assert.equal(M, M.full);
-  assert.deepEqual(hiddenWho(M, "alpha"), []);
-  assert.equal(M.personCat("alpha", PARTNER, "шум"), 1);
+test("when nobody chose who they are on this device, a place only one of us rated is hidden and a place we both rated is not", () => {
+  const M = build(blindData(), { me: "", anon: true });
+  assert.deepEqual(hiddenWho(M, "alpha"), [PARTNER]);
+  assert.equal(M.personCat("alpha", PARTNER, "шум"), null);
+  const both = blindData();
+  both.ratings.push(rating("alpha", ME, { "шум": 4 }));
+  const B = build(both, { me: "", anon: true });
+  assert.equal(B, B.full);
+  assert.deepEqual(hiddenWho(B, "alpha"), []);
+  assert.equal(B.personCat("alpha", PARTNER, "шум"), 1);
 });
 
 /* ---------- «Цифры места» ---------- */

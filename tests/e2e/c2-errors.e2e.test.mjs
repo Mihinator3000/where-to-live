@@ -206,52 +206,50 @@ test("a data repository that was renamed or deleted is not reported as a bad key
 
 /* =================== a save fails =================== */
 
-test("a rating save that fails with a GitHub server error keeps every answer and says so in plain words", { skip }, async () => {
+test("a rating save that fails with a GitHub server error keeps every answer on the phone, says so in plain words and sends it once GitHub answers", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await page.fill("#fReview", "Ветрено, но уютно.");
-  await rules([{ url: GH, body: COMMIT, status: 500, json: { message: "Server Error" } }]);
+  await rules([{ url: GH, body: COMMIT, status: 500, json: { message: "Server Error" }, times: 1 }]);
   await press("#fSave");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "save result");
-  const m = await fMsg();
-  assert.equal(await hash(), "#/rate", "stays in the form");
-  assert.equal(await qval("интернет"), "4");
-  assert.equal(await val("#fReview"), "Ветрено, но уютно.");
+  const m = await toastText(/GitHub/);
   assert.equal((await ratingsOn("batumi")).length, 0);
-  assert.equal((await pending()).length, 0, "not queued either, so the form is the only copy");
-  assert.match(m, /не сохран/i, `«${m}»`);
-  assert.match(m, /остал/i, `«${m}»`);
-  assert.match(m, /ещё раз|позже|попроб/i, `«${m}»`);
-  plain(m, "save error under the button");
+  const q = await pending();
+  assert.equal(q.length, 1, "the answers wait in the queue on the phone");
+  assert.match(q[0].content, /Ветрено, но уютно/);
+  assert.match(m, /сохранена/i, `«${m}»`);
+  assert.match(m, /отправлю сам/i, `«${m}»`);
+  plain(m, "save toast");
+  await page.tap({ sel: "#syncBtn" });
+  await page.waitFor(`JSON.parse(localStorage.getItem("wtl:pending") || "[]").length === 0`, 8000, "queue sent once GitHub answers");
+  assert.equal((await ratingsOn("batumi")).length, 1);
 });
 
-test("a rating save answered with a web page instead of data says in Russian that it was not saved and keeps the answers", { skip }, async () => {
+test("a rating save answered with a web page instead of data says in Russian that it waits on the phone and keeps the answers", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("шум", 2);
-  await rules([{ url: GH, body: COMMIT, status: 200, text: "<html><body>Proxy error</body></html>", type: HTML }]);
+  await rules([{ url: GH, body: COMMIT, status: 200, text: "<html><body>Proxy error</body></html>", type: HTML, times: 1 }]);
   await press("#fSave");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "save result");
-  const m = await fMsg();
-  assert.equal(await qval("шум"), "2");
-  assert.match(m, /не сохран/i, `«${m}»`);
-  plain(m, "save error under the button");
-  plain(await errBanner(), "banner on the rate screen");
+  const m = await toastText(/GitHub/);
+  assert.equal((await pending()).length, 1, "the answers wait in the queue on the phone");
+  assert.match(m, /сохранена/i, `«${m}»`);
+  plain(m, "save toast");
+  plain(await errBanner(), "banner after the save");
 });
 
-test("a rate-limited save keeps the answers and says when to try again, not «сбой на стороне GitHub»", { skip }, async () => {
+test("a rate-limited save keeps the answers and says when they go out, not «сбой на стороне GitHub»", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   const rule = limited(1800);
   await rules([Object.assign({}, rule, { body: COMMIT })]);
   await press("#fSave");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "save result");
-  const m = await fMsg();
+  const m = await toastText(/GitHub/);
   const at = await page.eval(`new Date(${rule.headers["x-ratelimit-reset"]} * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })`);
-  assert.equal(await qval("интернет"), "4");
-  assert.match(m, /остал/i, `«${m}»`);
+  assert.equal((await pending()).length, 1, "the answers wait in the queue on the phone");
+  assert.match(m, /сохранена/i, `«${m}»`);
   assert.doesNotMatch(m, /сбой/i, `a rate limit is not a failure on GitHub's side: «${m}»`);
   assert.doesNotMatch(m, /через минуту/, `GitHub said 30 minutes: «${m}»`);
-  assert.ok(m.includes(at) || /\b(29|30)\s*мин/.test(m), `does not say «после ${at}»: «${m}»`);
+  assert.ok(m.includes(at) || /\b(29|30)\s*мин/.test(m), `does not say «до ${at}»: «${m}»`);
 });
 
 test("with a key that can read but not write, the form says the answers stayed and to replace the key in settings, and the status is not «Ошибка связи»", { skip }, async () => {
@@ -271,25 +269,24 @@ test("with a key that can read but not write, the form says the answers stayed a
 test("a GitHub internal error reported inside a normal reply («Something went wrong…») reaches the user in Russian", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
-  await rules([{ url: GH, body: COMMIT, status: 200, json: { data: null, errors: [{ message: "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include `A1B2:3C4D` when reporting this issue." }] } }]);
+  await rules([{ url: GH, body: COMMIT, status: 200, json: { data: null, errors: [{ message: "Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include `A1B2:3C4D` when reporting this issue." }] }, times: 1 }]);
   await press("#fSave");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "save result");
-  const m = await fMsg();
-  assert.equal(await qval("интернет"), "4");
-  assert.match(m, /не сохран/i, `«${m}»`);
-  plain(m, "save error under the button");
-  plain(await errBanner(), "banner on the rate screen");
+  const m = await toastText(/GitHub/);
+  assert.equal((await pending()).length, 1, "the answers wait in the queue on the phone");
+  assert.match(m, /сохранена/i, `«${m}»`);
+  plain(m, "save toast");
+  plain(await errBanner(), "banner after the save");
 });
 
-test("after a failed save, pressing «Сохранить» again once GitHub is back saves exactly one rating", { skip }, async () => {
+test("after a save that met a GitHub error, the queued rating goes out once GitHub is back, exactly once", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await page.fill("#fReview", "Со второй попытки");
   await rules([{ url: GH, body: COMMIT, status: 502, text: "<html>Bad Gateway</html>", type: HTML, times: 1 }]);
   await press("#fSave");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "first save failed");
-  await press("#fSave");
-  await page.waitFor(`location.hash === "#/place/batumi"`, 6000, "saved on the second try");
+  await toastText(/GitHub/);
+  await page.tap({ sel: "#syncBtn" });
+  await page.waitFor(`JSON.parse(localStorage.getItem("wtl:pending") || "[]").length === 0`, 8000, "queue sent once GitHub answers");
   const rs = await ratingsOn("batumi");
   assert.equal(rs.length, 1);
   assert.equal(rs[0].review, "Со второй попытки");
@@ -313,16 +310,15 @@ test("a save whose reply was lost after GitHub committed it is queued, and sendi
   assert.doesNotMatch(await syncText(), /Не отправлено|Ошибка/);
 });
 
-test("a save that timed out at GitHub's gateway after the commit went through can be saved again without duplicating the rating or the question", { skip }, async () => {
+test("a save that timed out at GitHub's gateway after the commit went through is queued, and sending it duplicates neither the rating nor the question", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await page.fill("#fQuestions", "Где купить сим-карту?");
   await rules([{ url: GH, body: COMMIT, after: true, status: 504, text: "<html>504 Gateway Time-out</html>", type: HTML, times: 1 }]);
   await press("#fSave");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "first save result");
-  assert.equal(await hash(), "#/rate", "the user is told it failed and stays in the form");
-  await press("#fSave");
-  await page.waitFor(`location.hash === "#/place/batumi"`, 6000, "saved on the second try");
+  await toastText(/GitHub/);
+  await page.tap({ sel: "#syncBtn" });
+  await page.waitFor(`JSON.parse(localStorage.getItem("wtl:pending") || "[]").length === 0`, 8000, "queue sent once GitHub answers");
   assert.equal((await ratingsOn("batumi")).length, 1, "one rating, not two");
   const q = (await doc("places/batumi.json")).questions;
   assert.equal(q, "Где купить сим-карту?", `the question is written into the place card twice: ${JSON.stringify(q)}`);
@@ -390,14 +386,14 @@ test("a card edit that fails after I left the dossier is reported, and my text i
   await press("#placeForm [type=submit]", 50);
   await go("#/rank", 2500);
   const said = (await toasts()).join(" | ");
-  assert.match(said, /не сохран/i, `the user left the dossier before the error and was never told: toasts «${said}»`);
+  assert.match(said, /не сохран|сохранена на (этом устройстве|телефоне)/i, `the user left the dossier before the error and was never told: toasts «${said}»`);
   await go("#/place/porto", 500);
   const now = await val('#placeForm [name="questions"]');
   const kept = now.includes("отоплением") || /отоплением/.test(await page.text("#v-place"));
   assert.ok(kept, `my unsaved question is gone, the field shows «${now}»`);
 });
 
-test("a card save that fails with a GitHub server error says the card was not saved and what to do, without an HTTP code", { skip }, async () => {
+test("a card save that fails with a GitHub server error says the edit waits on the phone, without an HTTP code", { skip }, async () => {
   await open({ hash: "#/place/porto" });
   await page.fill('#placeForm [name="archetype"]', "город у океана");
   await rules([{ url: GH, body: COMMIT, status: 500, json: { message: "Server Error" } }]);
@@ -405,12 +401,13 @@ test("a card save that fails with a GitHub server error says the card was not sa
   await page.waitFor(`document.getElementById("placeMsg").innerText.trim() !== ""`, 6000, "save result");
   const m = await page.text("#placeMsg");
   assert.equal(await val('#placeForm [name="archetype"]'), "город у океана", "typed text kept");
-  assert.match(m, /не сохран/i, `«${m}»`);
-  assert.match(m, /ещё раз|позже|попроб/i, `«${m}»`);
-  plain(m, "card save error");
+  assert.equal((await pending()).length, 1, "the edit waits in the queue on the phone");
+  assert.match(m, /сохранена на (этом устройстве|телефоне)/i, `«${m}»`);
+  assert.match(m, /отправлю сам/i, `«${m}»`);
+  plain(m, "card save message");
 });
 
-test("adding a place while GitHub fails says the place was not added and to try again, without an HTTP code", { skip }, async () => {
+test("adding a place while GitHub fails keeps it on the phone and says so, without an HTTP code", { skip }, async () => {
   await open({ hash: "#/map" });
   await typeSearch("Будва");
   await page.tap({ text: "Будва", within: "#searchResults" });
@@ -419,34 +416,34 @@ test("adding a place while GitHub fails says the place was not added and to try 
   await page.tap({ text: "Добавить как место", within: "#sheet" });
   const t = await toastText(/./);
   assert.equal(await doc("places/budva.json"), null);
-  assert.match(t, /не добавлен|не сохран/i, `«${t}»`);
-  assert.match(t, /ещё раз|позже|попроб/i, `«${t}»`);
+  assert.equal((await pending()).length, 1, "the place waits in the queue on the phone");
+  assert.match(t, /место сохранено на (этом устройстве|телефоне)/i, `«${t}»`);
+  assert.match(t, /отправлю сам/i, `«${t}»`);
   plain(t, "add place toast");
-  assert.equal(await page.eval(`document.querySelector('#sheet [data-act="addcity"]').disabled`), false, "the button can be pressed again");
 });
 
-test("saving weights while GitHub fails says they were not saved, and the button can be pressed again", { skip }, async () => {
+test("saving weights while GitHub fails keeps them on the phone and says so", { skip }, async () => {
   await open({ hash: "#/rank", local: { "wtl:wopen": true } });
   await rules([{ url: GH, body: COMMIT, status: 500, json: { message: "Server Error" } }]);
   await press("#wsaveBtn");
   const t = await toastText(/./);
   assert.equal(Object.keys(await files()).filter(k => k.startsWith("weights/")).length, 0);
-  assert.match(t, /не сохран/i, `«${t}»`);
+  assert.equal((await pending()).length, 1, "the weights wait in the queue on the phone");
+  assert.match(t, /веса сохранены на (этом устройстве|телефоне)/i, `«${t}»`);
   plain(t, "weights toast");
-  assert.equal(await page.eval(`document.getElementById("wsaveBtn") && !document.getElementById("wsaveBtn").disabled`), true);
 });
 
-test("deleting a rating while GitHub fails keeps the rating and says it was not deleted, without an HTTP code", { skip }, async () => {
+test("deleting a rating while GitHub fails keeps the deletion on the phone and says so, without an HTTP code", { skip }, async () => {
   await open({ hash: "#/place/porto" });
   await openEdit("porto");
   await rules([{ url: GH, body: COMMIT, status: 500, json: { message: "Server Error" } }]);
   await press("#fDelete");
   await press("#fDelete");
-  await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "delete result");
-  const m = await fMsg();
-  assert.equal((await doc("ratings/r1.json")).deleted, false);
-  assert.match(m, /не удален/i, `«${m}»`);
-  plain(m, "delete error");
+  const m = await toastText(/GitHub/);
+  assert.equal((await doc("ratings/r1.json")).deleted, false, "GitHub did not get the deletion yet");
+  assert.equal((await pending()).length, 1, "the deletion waits in the queue on the phone");
+  assert.match(m, /удаление сохранено на (этом устройстве|телефоне)/i, `«${m}»`);
+  plain(m, "delete toast");
 });
 
 /* =================== impatient taps =================== */
@@ -552,7 +549,7 @@ test("going back while a rating save fails keeps the answers in «Оценить
   await open({ hash: "#/place/batumi" });
   await go("#/rate/new/batumi", 400);
   await score("интернет", 4);
-  await rules([{ url: GH, body: COMMIT, delay: 1000, status: 500, json: { message: "Server Error" } }]);
+  await rules([Object.assign({ delay: 1000 }, { url: GH, body: COMMIT, status: 403, json: { message: "Resource not accessible by personal access token" } })]);
   await press("#fSave", 30);
   await page.eval("history.back()");
   await page.waitFor(`location.hash === "#/place/batumi"`, 3000, "back in the dossier");
@@ -796,7 +793,7 @@ test("rating files that are valid JSON but not a rating (a number, null, text, a
 test("at desktop width in dark mode the error banner and a failed save are readable and nothing scrolls sideways", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" }, { w: 1280, h: 800, dark: true });
   await score("интернет", 4);
-  await rules([{ url: GH, body: COMMIT, status: 500, json: { message: "Server Error" } }]);
+  await rules([{ url: GH, body: COMMIT, status: 403, json: { message: "Resource not accessible by personal access token" } }]);
   await press("#fSave");
   await page.waitFor(`document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "save result");
   await page.shot("c2-errors-desktop-dark");

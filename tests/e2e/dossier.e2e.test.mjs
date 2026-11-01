@@ -159,7 +159,7 @@ test("a place we have not visited says its total comes from world data only", { 
 test("the radar legend names both people, world data and the SPb ring, and residents only when there are any", { skip }, async () => {
   await openDossier("porto");
   const legend = await page.text(".radar .legend");
-  for (const w of ["Михаил", "Вика", "Данные", "СПб = 3"]) assert.ok(legend.includes(w), `legend has ${w}`);
+  for (const w of ["Михаил", "Вика", "Мировые данные", "СПб = 3"]) assert.ok(legend.includes(w), `legend has ${w}`);
   assert.ok(!legend.includes("Живущие"));
   assert.match(await page.eval(`document.querySelector(".radar svg").getAttribute("aria-label")`), /Порту/);
   await openDossier("porto", { files: portoWith({ ext: { "интернет": { res: 4 } } }) });
@@ -204,7 +204,7 @@ test("a partner's rating stays hidden in year, review, radar and table until rev
   assert.match(await page.text(".trips"), /Ваших оценок здесь пока нет/);
   assert.equal(await page.eval(`[...document.querySelectorAll(".radar svg path")].some(p => p.getAttribute("stroke") === "var(--v)")`), false);
   assert.equal(await page.eval(`[...document.querySelectorAll(".subtable td.n")].some(td => td.title.includes("скрыто"))`), true);
-  await page.tap({ text: "Показать всё равно", within: ".trips" });
+  await page.tap({ text: "Показать всё равно", within: "#v-place .panel.pad" });
   assert.match((await page.text(".year")).replace(/\s+/g, " "), /Вика 4\/10/);
   assert.match(await page.text(".trips"), /Пыльно и шумно/);
   assert.equal(await page.eval(`[...document.querySelectorAll(".radar svg path")].some(p => p.getAttribute("stroke") === "var(--v)")`), true);
@@ -218,7 +218,7 @@ test("revealing a partner's rating does not wipe what I am typing in the place c
   await openDossier("tbilisi");
   await page.fill('#placeForm [name="questions"]', "Где снять квартиру без посредника?");
   await page.fill('[name="fact_dinner"]', "28");
-  await page.tap({ text: "Показать всё равно", within: ".trips" });
+  await page.tap({ text: "Показать всё равно", within: "#v-place .panel.pad" });
   assert.equal(await value('#placeForm [name="questions"]'), "Где снять квартиру без посредника?", "unsaved card text is lost");
   assert.equal(await value('[name="fact_dinner"]'), "28", "unsaved number is lost");
 });
@@ -260,7 +260,7 @@ test("world data shows a 12-month climate chart against SPb with a legend and th
   assert.match(legend, /Порту, средняя °C/);
   assert.match(legend, /СПб, °C/);
   assert.match(legend, /осадки, мм/);
-  assert.match(await page.eval(`document.querySelectorAll(".sec-head")[1].innerText`), /климат: Порту, 0 км · Csb/);
+  assert.match(await page.eval(`document.querySelectorAll(".sec-head")[1].innerText`), /климат: Порту · Csb/);
 });
 
 test("the base city's climate chart has no second SPb line", { skip }, async () => {
@@ -420,7 +420,7 @@ test("SPb numbers show the default references and become the reference for other
   await page.tap({ text: "Сохранить цифры" });
   await savedPlace("sankt-peterburg", "p => p.facts && p.facts.rent && p.facts.rent.v === 600", "SPb rent saved");
   await page.goto(srv.url + "#/place/porto", 400);
-  assert.match((await factBlock("rent")).text, /СПб: €600\./);
+  assert.match((await factBlock("rent")).text, /СПб: 600\s€\./);
   await page.fill('[name="fact_rent"]', "900");
   await page.tap({ text: "Сохранить цифры" });
   await page.waitFor(`(document.querySelector("#factsForm [name=fact_rent]").closest(".fact").querySelector(".badge") || {}).innerText === "2.0"`, 5000, "1.5× the new SPb rent = 2.0");
@@ -558,7 +558,7 @@ test("saving the card offline queues it, shows it right away and sends it when t
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await page.fill('#placeForm [name="archetype"]', "малый курорт");
   await page.tap({ text: "Сохранить карточку" });
-  assert.match(await toastText(/Нет связи/), /отправится позже/);
+  assert.match(await toastText(/Нет связи/), /отправится, когда появится связь/);
   assert.equal(await page.eval(`JSON.parse(localStorage.getItem("wtl:pending")).length`), 1);
   assert.ok((await page.eval(`[...document.querySelectorAll(".place-head .chip")].map(c => c.innerText)`)).includes("малый курорт"));
   assert.match(await page.text("#syncText"), /В очереди: 1/);
@@ -572,7 +572,7 @@ test("saving the card offline queues it, shows it right away and sends it when t
 test("opened offline from the cache, the dossier still shows the place and its trips", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/places", offline: true, local: { "wtl:cache": cacheOf() } });
   await page.goto(srv.url + "#/place/porto", 400);
-  assert.match(await page.text("#syncText"), /Офлайн/);
+  assert.match(await page.text("#syncText"), /Нет связи/);
   assert.equal(await page.text("#v-place h1"), "Порту");
   assert.match(await page.text(".trips"), /Красиво, но сыро/);
 });

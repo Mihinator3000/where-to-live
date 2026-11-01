@@ -130,7 +130,8 @@ test("a queued save that fails for a reason other than the network leaves nothin
   await a.refresh();
   remote.state.offlineNext = 1;
   await a.savePlace(Object.assign({}, P, { questions: "A1" }), false);
-  remote.state.failNext = 1;
-  await assert.rejects(a.savePlace(Object.assign({}, P, { questions: "A2" }), false));
+  let once = 1;
+  globalThis.fetch = async (url, o) => (once-- > 0 ? new Response(JSON.stringify({ message: "Resource not accessible by personal access token" }), { status: 403 }) : remote.fetchImpl(url, o));
+  await assert.rejects(a.savePlace(Object.assign({}, P, { questions: "A2" }), false), e => e.code === "forbidden");
   assert.deepEqual(a.pending.map(c => JSON.parse(c.content).questions), ["A1"]);
 });

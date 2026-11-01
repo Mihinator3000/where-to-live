@@ -173,9 +173,9 @@ test("a rating saved offline survives closing the app and is sent once the netwo
   await score("интернет", 4);
   await page.fill("#fReview", "Сеть в горах пропадала.");
   await saveRating("batumi");
-  assert.match(await toastSeen(/Нет связи/), /отправится позже/);
+  assert.match(await toastSeen(/Нет связи/), /отправится, когда появится связь/);
   await reload();
-  assert.equal(await syncText(), "Офлайн · в очереди: 1");
+  assert.equal(await syncText(), "Нет связи · в очереди: 1");
   assert.match(await page.text("#v-place"), /Сеть в горах пропадала/, "my queued trip is still shown after the app was closed");
   assert.equal((await remoteRatings("batumi")).length, 0);
   await online();
@@ -296,7 +296,7 @@ test("saving numbers and then the card right away on a slow network saves both w
   assert.equal(p.archetype, "город у океана", "the card typed next to the numbers was not saved");
 });
 
-test("while a new place is being added on a slow network «Добавить место» shows it, and a second tap adds nothing", { skip }, async () => {
+test("while a new place is being added on a slow network «Добавить как место» shows it, and a second tap adds nothing", { skip }, async () => {
   await fresh({ hash: "#/map" });
   await page.fill("#searchInput", "");
   await page.tap({ sel: "#searchInput" });
@@ -330,21 +330,20 @@ test("a rating that finishes saving after I moved to another tab confirms it the
   assert.equal(await page.eval("location.hash"), "#/rank", "the app jumped away from the tab I chose while it was saving");
 });
 
-test("a save that fails after I left the rating screen tells me so, and the answers wait in the form", { skip }, async () => {
+test("a save that fails after I left the rating screen tells me so, and the answers wait on the phone", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await knob("mock:delay", 1200);
   await knob("test:writeStatus", 500);
   await press("#fSave", 80);
   await page.tap({ sel: '.bottomnav a[data-nav="map"]' }, 100);
-  await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 8000, "save failed");
+  await page.waitFor(`/^Ждут GitHub/.test(document.getElementById("syncText").innerText)`, 8000, "save queued");
   await sleep(400);
   const seen = (await toasts()).join("\n");
-  assert.match(seen, /не сохран|не отправ|не удалось|не записа/i, `on the map nothing says the rating was not saved; toasts: «${seen}»`);
+  assert.match(seen, /сохранена на (этом устройстве|телефоне)/i, `on the map nothing says where the rating is; toasts: «${seen}»`);
   await knob("test:writeStatus", null);
   await knob("mock:delay", null);
-  await go("#/rate");
-  assert.equal(await qval("интернет"), "4", "the answers are still in the form");
+  assert.equal((await pending()).length, 1, "the answers wait in the queue on the phone");
 });
 
 test("closing the app in the middle of a slow save keeps the answers, and saving again writes one rating", { skip }, async () => {
@@ -494,7 +493,7 @@ test("unsent changes stay listed while offline or with a broken key", { skip }, 
   assert.match(await screenText(), /Не отправлено/);
   await offline();
   await page.tap({ sel: "#syncBtn" });
-  await page.waitFor(`/Офлайн/.test(document.getElementById("syncText").innerText)`, 5000, "offline");
+  await page.waitFor(`/Нет связи/.test(document.getElementById("syncText").innerText)`, 5000, "offline");
   assert.match(await screenText(), /Не отправлено|Мой вопрос/, "offline the unsent change vanished from every screen");
   await knob("mock:offline", null);
   await knob("test:status", 401);
@@ -636,7 +635,7 @@ test("a GitHub outage during a rating save says in plain words that the answers 
   await sleep(200);
   const said = (await page.text("#fMsg")) + "\n" + (await toasts()).join("\n");
   assert.match(said, /остал|сохран[а-я]* на|не потер|отправится/i, `«${said}» — is my rating safe?`);
-  assert.match(said, /позже|ещё раз|через минуту|сам[аи]?\b|автоматически/i, `«${said}» — what should I do?`);
+  assert.match(said, /позже|ещё раз|через минуту|сам[аи]?\b|автоматически|отправлю сам/i, `«${said}» — what should I do?`);
 });
 
 test("with a revoked key or GitHub down, the screen says my queued changes are kept", { skip }, async () => {
@@ -649,9 +648,9 @@ test("with a revoked key or GitHub down, the screen says my queued changes are k
     await knob("mock:offline", null);
     await knob("test:status", code);
     await page.tap({ sel: "#syncBtn" });
-    await page.waitFor(`["Ключ не подходит", "Ошибка связи"].includes(document.getElementById("syncText").innerText)`, 6000, "failure shown");
+    await page.waitFor(`["Ключ не подходит", "Ошибка связи"].includes(document.getElementById("syncText").innerText) || /^Ждут GitHub/.test(document.getElementById("syncText").innerText)`, 6000, "failure shown");
     const t = await alertsText();
-    assert.match(t, /очеред|ждут? отправки|не отправлен/i, `HTTP ${code}: one change waits on the phone, but the header and banners only say «${t}»`);
+    assert.match(t, /очеред|ждут? отправки|не отправлен|ждут github/i, `HTTP ${code}: one change waits on the phone, but the header and banners only say «${t}»`);
     await knob("test:status", null);
   }
 });
@@ -665,7 +664,7 @@ test("after a GitHub outage ends, the queued change is sent on the next check wi
   await knob("mock:offline", null);
   await knob("test:status", 503);
   await page.tap({ sel: "#syncBtn" });
-  await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 6000, "outage shown");
+  await page.waitFor(`/^Ждут GitHub/.test(document.getElementById("syncText").innerText)`, 6000, "outage shown");
   assert.equal((await pending()).length, 1, "the change is still kept");
   await knob("test:status", null);
   await comeBack();

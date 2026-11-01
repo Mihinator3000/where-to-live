@@ -381,7 +381,7 @@ test("weights saved offline are queued, already work as my preset, and are sent 
   await slide("nature", 0.8);
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await page.tap({ sel: "#wsaveBtn" });
-  assert.match(await toastText(/Нет связи/), /веса отправятся позже/);
+  assert.match(await toastText(/Нет связи/), /веса[^.]*отправятся, когда появится связь/);
   assert.deepEqual(await page.eval(`JSON.parse(localStorage.getItem("wtl:pending")).map(p => p.path)`), ["weights/mihail.json"]);
   assert.equal(await pressed(), "Михаил");
   assert.deepEqual(await mainRows(), ["Гамма", "Альфа", "Омега"]);
@@ -490,7 +490,7 @@ test("flags from places I have not rated are hidden behind a note until I reveal
   const files = repo({ places: [SPB, place("alfa", "Альфа", { cc: "PRT", country: "Португалия" })], ratings: [rating("v1", "alfa", "Вика", { "улица": 1, "шум": 1 })] });
   await open({ files });
   assert.equal(await page.eval(`document.querySelectorAll(".flags .flag").length`), 0);
-  assert.match(await page.text(".flags"), /Ещё 2 флага скрыты — по местам, которые вы сами пока не оценили, чтобы не подглядывать\./);
+  assert.match(await page.text(".flags"), /Флаги по местам, которые вы сами ещё не оценили, появятся после вашей оценки — чтобы не подглядывать\./);
   await page.tap({ sel: "#rank a.row", text: "Альфа" });
   await page.waitFor(`location.hash === "#/place/alfa"`, 3000, "dossier");
   await page.tap({ text: "Показать всё равно" });
@@ -605,7 +605,7 @@ test("each place row shows its score, country, status and how many ratings it ha
   await open({ files, hash: "#/places" });
   const by = Object.fromEntries((await plist()).map(r => [r.name, r]));
   assert.match(by["Порту"].score, /^\d\.\d$/);
-  assert.deepEqual(by["Порту"].meta, ["Португалия", "кандидат", "оценок: 2", "год здесь: Михаил 7/10 · Вика 6/10"]);
+  assert.deepEqual(by["Порту"].meta, ["Португалия", "кандидат", "оценок: 2", "прожили бы год здесь: Михаил 7/10 · Вика 6/10"]);
   assert.deepEqual(by["Батуми"].meta, ["Грузия", "кандидат", "только мировые данные"]);
   assert.deepEqual(by["Тбилиси"].meta, ["Грузия", "кандидат", "оценка Вики скрыта до вашей"]);
   assert.equal(by["Санкт-Петербург"].score, "3.0");

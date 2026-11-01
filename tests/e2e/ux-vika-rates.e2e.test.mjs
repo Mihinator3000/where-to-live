@@ -245,7 +245,7 @@ test("«Где жили» says what the choice is for or what each area means", 
 
 test("the work question offers plain answers and the dossier shows how the trip went", { skip }, async () => {
   await asVika();
-  assert.deepEqual(await page.eval(`[...document.querySelectorAll('[data-opt="mode"]')].map(b => b.innerText.trim())`), ["не работали", "работали все будни", "работали часть дней"]);
+  assert.deepEqual(await page.eval(`[...document.querySelectorAll('[data-opt="mode"]')].map(b => b.innerText.trim())`), ["Не работали", "Работали все будни", "Работали часть дней"]);
   await page.select("#fPlace", "Батуми");
   await page.fill("#fStart", "2026-09-01");
   await page.fill("#fEnd", "2026-09-14");

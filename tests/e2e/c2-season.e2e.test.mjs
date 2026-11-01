@@ -890,7 +890,7 @@ test("a red flag in Вика's hidden rating is only counted on Михаил's p
   await onPhone("Михаил", "#/rank");
   let flags = (await page.text("#v-rank .flags")).replace(/\s+/g, " ");
   assert.doesNotMatch(flags, /Будва|1\.5/, "Vika's flag leaks before Mikhail rated Будва: " + flags);
-  assert.match(flags, /Ещё 1 флаг скрыт/);
+  assert.match(flags, /появятся после вашей оценки/);
   await nav("Оценить");
   await fillTrip(TRIP.mBudva);
   await saveTrip("budva");

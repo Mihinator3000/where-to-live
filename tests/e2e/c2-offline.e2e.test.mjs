@@ -285,7 +285,7 @@ test("without internet every screen opens from the offline copy with our data an
       const ok = await softWait(check, 4000);
       if (!ok) problems.push(`${dark ? "dark" : "light"} ${hash}: ${(await page.eval(`document.querySelector(".view:not([hidden])")?.innerText.slice(0, 160) || "(nothing)"`)).replace(/\s+/g, " ")}`);
       const sync = await page.text("#syncText");
-      if (!/^Офлайн/.test(sync)) problems.push(`${hash}: status says «${sync}»`);
+      if (!/^Нет связи/.test(sync)) problems.push(`${hash}: status says «${sync}»`);
     }
   }
   assert.deepEqual(problems, []);
@@ -335,7 +335,7 @@ test("the installed app opened offline from its home-screen link with extra para
   await page.send("Page.navigate", { url: site.url + "?source=homescreen#/rank" });
   await booted();
   assert.equal(await h1(), "Рейтинг");
-  assert.equal(await page.text("#syncText"), "Офлайн");
+  assert.equal(await page.text("#syncText"), "Нет связи");
   assert.deepEqual(page.takeErrors(), []);
 });
 
@@ -392,7 +392,8 @@ test("with 100 places and 300 ratings, a launch without internet on a 4× slower
   await page.waitFor(READY["#/rank"], 15000, "ranking offline");
   const ms = Date.now() - t0;
   await page.send("Emulation.setCPUThrottlingRate", { rate: 1 });
-  assert.equal(await page.text("#syncText"), "Офлайн");
+  await page.waitFor(`document.getElementById("syncText").innerText !== "Обновляю…"`, 3000, "offline status after the mock's delay").catch(() => {});
+  assert.equal(await page.text("#syncText"), "Нет связи");
   assert.ok(ms < 2000, `ranking offline after ${ms} ms`);
 });
 

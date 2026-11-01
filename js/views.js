@@ -10,7 +10,7 @@ const personClass = (M, who) => (who === M.PEOPLE[1] ? "v" : "m");
 const hidden = (M, id, w) => !!(M.hidden && M.hidden(id, w));
 export const hiddenWho = (M, id) => M.PEOPLE.filter(w => hidden(M, id, w));
 export const hasResidents = M => M.places.some(p => p.ext && Object.values(p.ext).some(e => e && e.res != null));
-export const hiddenNote = (M, id) => { const w = hiddenWho(M, id); return w.length === 1 ? `оценка ${gen(w[0])} скрыта до вашей` : w.length ? `оценки ${w.map(gen).join(" и ")} скрыты до вашей` : ""; };
+export const hiddenNote = (M, id) => { const w = hiddenWho(M, id), why = M.me === "" ? "пока не выбрано, кто вы" : "до вашей"; return w.length === 1 ? `оценка ${gen(w[0])} скрыта${M.me === "" ? ", " : " "}${why}` : w.length ? `оценки ${w.map(gen).join(" и ")} скрыты${M.me === "" ? ", " : " "}${why}` : ""; };
 
 export function yearsLine(M, id) {
   return M.PEOPLE.map(w => { const y = hidden(M, id, w) ? null : M.latestYear(id, w); return y == null ? null : `${w} ${y}/10`; }).filter(Boolean).join(" · ");
@@ -52,7 +52,7 @@ export function rankHTML(M, W, moves = {}, fast = false) {
   baseRows();
   own.forEach((row, i) => { if (!above(row)) html += rowHTML(row, i + 1, false); });
   if (dataOnly.length) {
-    html += `<div class="rank-sub">Мало своих оценок: для рейтинга нужно хотя бы ${Math.ceil(MIN_OWN * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length} ответов на ★, пока итог в основном по мировым данным</div>`;
+    html += `<div class="rank-sub"><b>Мало своих оценок</b><span>Для рейтинга нужно хотя бы ${Math.ceil(MIN_OWN * M.STAR_KEYS.length)} из ${M.STAR_KEYS.length} ответов на главные вопросы ★; пока итог в основном по мировым данным.</span></div>`;
     dataOnly.forEach(row => { html += rowHTML(row, 0, true); });
   }
   if (r.thin.length) html += `<div class="empty-row">Мало данных для рейтинга (заполнено меньше ${MIN_COVERAGE * 100}%): ${r.thin.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${Math.round(x.t.coverage * 100)}%`).join(", ")}</div>`;
@@ -83,9 +83,9 @@ export function heatHTML(M, W) {
 
 export function flagsHTML(M, all = false) {
   const label = { crit: "красный флаг", serious: "разногласие", warn: "иллюзия туриста", info: "недооценили" };
-  const shown = M.allFlags(), off = M.full && M.full !== M ? Math.max(0, M.full.allFlags().length - shown.length) : 0;
-  const note = off ? `<p class="small muted">Ещё ${off} ${plural(off, "флаг скрыт", "флага скрыты", "флагов скрыто")} — по местам, которые вы сами пока не оценили, чтобы не подглядывать.</p>` : "";
-  const legend = `<p class="small muted">Красный флаг — чья-то оценка 1.5 и ниже или вето. Разногласие — наши оценки расходятся на 1.5 балла и больше. Иллюзия туриста и «недооценили» — наша оценка и слова живущих расходятся на 1.5 и больше.</p>`;
+  const shown = M.allFlags(), off = M.places.some(p => hiddenWho(M, p.id).length);
+  const note = off ? `<p class="small muted">Флаги по местам, которые вы сами ещё не оценили, появятся после вашей оценки — чтобы не подглядывать.</p>` : "";
+  const legend = `<p class="small muted">Красный флаг — оценка 1.5 и ниже или вето. Разногласие — наши оценки разошлись на 1.5 и больше. Иллюзия туриста и «недооценили» — так же разошлись мы и живущие.</p>`;
   const byPlace = new Map();
   shown.forEach(f => { if (!byPlace.has(f.place)) byPlace.set(f.place, []); byPlace.get(f.place).push(f); });
   const names = Object.fromEntries(M.places.map(p => [p.id, p.name]));
@@ -124,7 +124,7 @@ export function radarSVG(M, p) {
     { src: M.PEOPLE[0], color: "var(--m)", dash: "", fill: true },
     { src: M.PEOPLE[1], color: "var(--v)", dash: "", fill: true },
     { src: "res", color: "var(--res)", dash: "", fill: false, label: "Живущие" },
-    { src: "data", color: "var(--data)", dash: "5 4", fill: false, label: "Данные" },
+    { src: "data", color: "var(--data)", dash: "5 4", fill: false, label: "Мировые данные" },
   ];
   series.forEach(s => {
     if (hidden(M, p.id, s.src)) return;
@@ -149,6 +149,12 @@ export function radarSVG(M, p) {
 }
 
 
+export function radarLegend(M, p, data = "Мировые данные") {
+  const S = [[M.PEOPLE[0], "m", M.PEOPLE[0]], [M.PEOPLE[1], "v", M.PEOPLE[1]], ["res", "res", "Живущие"], ["data", "data", data]];
+  const drawn = src => M.GROUPS.some(g => M.groupScore(p, g.key, src) != null);
+  return S.map(([src, cls, name]) => hidden(M, p.id, src) ? `<span><i class="sw hid"></i>${esc(name)} — скрыто до вашей оценки</span>` : drawn(src) ? `<span><i class="sw ${cls}"></i>${esc(name)}</span>` : "").join("") + `<span><i class="sw base"></i>СПб = 3</span><span class="muted">ближе к краю — лучше</span>`;
+}
+
 export function radarTable(M, p) {
   const cols = M.PEOPLE.filter(w => !hidden(M, p.id, w)).map(w => [w, w]).concat([["res", "Живущие"], ["data", "Данные"]]).filter(([src]) => M.GROUPS.some(g => M.groupScore(p, g.key, src) != null));
   if (!cols.length) return "";
@@ -160,7 +166,7 @@ export function notesText(M, notes) {
 }
 
 export function tripsHTML(M, p, editable, me, waiting = new Set()) {
-  if (M.isBase(p)) return `<p class="small muted">СПб — точка отсчёта: по бытовым группам 3 по определению. Позже сюда придут данные и отзывы, включая риски варианта «остаться».</p>`;
+  if (M.isBase(p)) return `<p class="small muted">СПб — точка отсчёта: его не оценивают, все места сравниваются с ним.</p>`;
   const rs = M.ratingsOf(p.id).slice().sort((a, b) => String(b.start || b.updatedAt || "").localeCompare(String(a.start || a.updatedAt || "")));
   const years = M.PEOPLE.map(w => { const y = hidden(M, p.id, w) ? "скрыто" : M.latestYear(p.id, w); return `<span>${esc(w)} <b>${y == null ? "—" : esc(y)}</b>${y == null || y === "скрыто" ? "" : "/10"}</span>`; }).join("");
   if (!rs.length && !hiddenWho(M, p.id).length) return `<div class="year"><span class="muted">Прожили бы здесь год?</span><div class="yv">${years}</div></div><p class="small muted">Своих оценок пока нет.</p>`;
@@ -174,7 +180,7 @@ export function tripsHTML(M, p, editable, me, waiting = new Set()) {
     const partner = M.PEOPLE.find(w => w !== r.who), blind = me && r.who === me && partner && M.full && !M.full.ratingsOf(p.id).some(x => x.who === partner);
     const notes = [notesText(M, r.notes), r.surprises].filter(Boolean).join("\n\n");
     const mine = !me || r.who === me;
-    html += `<div class="trip" data-rid="${esc(r.id)}"><div class="who"><i class="sw ${cls}"></i>${esc(r.who)}<span class="muted small" style="font-weight:400">· ${esc(dates)}</span>${waiting.has(r.id) ? `<span class="chip warn" title="Сохранена на этом устройстве и отправится, когда появится связь">ждёт отправки</span>` : ""}</div>
+    html += `<div class="trip" data-rid="${esc(r.id)}"><div class="who"><i class="sw ${cls}"></i>${esc(r.who)}<span class="muted small" style="font-weight:400">· ${esc(dates)}</span>${waiting.has(r.id) ? `<span class="chip warn" title="Сохранена на этом устройстве и отправится сама">ждёт отправки</span>` : ""}</div>
       ${facts ? `<div class="small muted">${facts}</div>` : ""}
       ${r.review ? `<div class="review ${cls}">${esc(r.review)}</div>` : ""}
       <div class="small">★ заполнено: <span class="num">${filled} из ${M.STAR_KEYS.length}</span>${r.veto ? ` · <span class="sev crit">вето: ${esc(r.veto)}</span>` : ""}</div>
@@ -183,7 +189,7 @@ export function tripsHTML(M, p, editable, me, waiting = new Set()) {
       ${editable && mine ? `<div><a class="btn ghost small" href="#/rate/${encodeURIComponent(r.id)}">Изменить</a></div>` : ""}</div>`;
   });
   if (M.PEOPLE.some(w => rs.filter(r => r.who === w).length > 1)) html += `<p class="small muted">Несколько поездок одного человека сводятся в одну оценку: поездки в худший сезон и на удалёнке весят больше, по памяти — меньше.</p>`;
-  hiddenWho(M, p.id).forEach(w => { html += `<div class="trip hidden-trip"><div class="small">${esc(w)}: оценка скрыта, пока вы не оцените это место сами, чтобы не подглядывать.</div><button type="button" class="linkbtn small" data-reveal="${esc(p.id)}">Показать всё равно</button></div>`; });
+  hiddenWho(M, p.id).forEach(w => { html += `<div class="trip hidden-trip"><div class="small">${esc(w)}: оценка скрыта, пока вы не оцените это место сами, чтобы не подглядывать.</div></div>`; });
   return html;
 }
 
@@ -200,9 +206,9 @@ export function subtableHTML(M, p, showEmpty, typed = {}) {
       if (!has && !showEmpty) return;
       const conf = M.PEOPLE.map(w => M.confOf(p.id, w, c.key));
       const flags = M.catFlags(p, c.key).map(f => `<span class="sev ${f.sev}">${esc(f.short)}</span>`).join(" ");
-      const mark = `<span class="c" title="Балл посчитан из «Цифр места»">ц</span>`;
+      const mark = `<span class="c" title="Оценка посчитана из «Цифр места»">ц</span>`;
       const cell = (v, i) => hidden(M, p.id, M.PEOPLE[i]) ? `<td class="n muted" title="скрыто, пока вы не оцените сами"><span role="img" aria-label="скрыто">·</span></td>` : `<td class="n">${fmt(v)}${v != null && conf[i] ? `<span class="c" title="${esc(CONF[conf[i]] || "")}">${esc(conf[i])}</span>` : ""}</td>`;
-      rows.push(`<tr><td>${c.star ? '<span class="star" title="Главный вопрос каждой поездки">★</span> ' : ""}${esc(c.name)}${flags ? `<span class="flags-in">${flags}</span>` : ""}</td><td class="n"><b>${fmt(fin)}</b></td>${per.map(cell).join("")}${res ? `<td class="n">${fmt(rv)}</td>` : ""}${typed[c.key] && dat != null ? `<td class="n" title="${esc(typed[c.key])}">${fmt(dat)}${mark}</td>` : `<td class="n">${fmt(dat)}</td>`}<td class="flagcol">${flags}</td></tr>`);
+      rows.push(`<tr><td>${c.star ? '<span class="star" data-tip="Главный вопрос каждой поездки">★</span> ' : ""}${esc(c.name)}${flags ? `<span class="flags-in">${flags}</span>` : ""}</td><td class="n"><b>${fmt(fin)}</b></td>${per.map(cell).join("")}${res ? `<td class="n">${fmt(rv)}</td>` : ""}${typed[c.key] && dat != null ? `<td class="n" title="${esc(typed[c.key])}">${fmt(dat)}${mark}</td>` : `<td class="n">${fmt(dat)}</td>`}<td class="flagcol">${flags}</td></tr>`);
     });
     if (rows.length) {
       any = true;
@@ -239,6 +245,6 @@ export function placesListHTML(M, W, filter, connected = true) {
     if (t.base) return `${head}<a class="prow" href="${placeHref(p.id)}"><i class="sw" style="background:var(--base)"></i><b>${esc(p.name)}</b><span class="score num">3.0</span>
       <span class="meta">${p.country ? `<span>${esc(p.country)}</span>` : ""}<span>точка отсчёта: с ним сравниваем все места</span></span></a>`;
     return `${head}<a class="prow" href="${placeHref(p.id)}"><i class="sw" style="background:${t.score == null ? "var(--none)" : scoreColor(t.score)}"></i><b>${esc(p.name)}</b><span class="score num">${fmt(t.score)}</span>
-      <span class="meta">${p.country ? `<span>${esc(p.country)}</span>` : ""}<span>${esc(out && p.status !== "отсев" ? "вето" : p.status || "кандидат")}</span><span>${n ? "оценок: " + n : hiddenNote(M, p.id) || (t.score != null ? "только мировые данные" : "оценок нет")}</span>${years ? `<span>год здесь: ${esc(years)}</span>` : ""}${t.score != null && t.coverage < MIN_COVERAGE ? `<span>заполнено ${Math.round(t.coverage * 100)}%</span>` : ""}</span></a>`;
+      <span class="meta">${p.country ? `<span>${esc(p.country)}</span>` : ""}<span>${esc(out && p.status !== "отсев" ? "вето" : p.status || "кандидат")}</span><span>${n ? "оценок: " + n : hiddenNote(M, p.id) || (t.score != null ? "только мировые данные" : "оценок нет")}</span>${years ? `<span>прожили бы год здесь: ${esc(years)}</span>` : ""}${t.score != null && t.coverage < MIN_COVERAGE ? `<span>заполнено ${Math.round(t.coverage * 100)}%</span>` : ""}</span></a>`;
   }).join("");
 }

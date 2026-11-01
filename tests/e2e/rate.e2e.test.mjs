@@ -124,7 +124,7 @@ test("every answer typed into the form is saved exactly as entered", { skip }, a
   await page.fill("#fStart", "2025-02-03");
   await page.fill("#fEnd", "2025-03-02");
   await press('[data-opt="season"][data-val="худший"]');
-  await page.tap({ sel: '[data-opt="mode"]', text: "работали часть дней" });
+  await page.tap({ sel: '[data-opt="mode"]', text: "Работали часть дней" });
   await press('[data-opt="housing"][data-val="центр"]');
   await score("интернет", 4.5);
   await score("улица", 2);
@@ -250,7 +250,7 @@ test("the star counter counts main and extra answers separately, and so do the g
   await score("чистота", 3);
   await press("#fShowAll");
   await score("магазины", 4.5);
-  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · ещё 1");
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · ещё 1 · нужно 5");
   assert.equal(await page.text("#gc-city"), "· 3 из 8");
 });
 
@@ -441,7 +441,7 @@ test("a rating saved offline shows in the dossier at once and can still be corre
   await score("интернет", 4);
   await page.fill("#fReview", "Сеть падала дважды.");
   await saveAndLand("batumi");
-  assert.match(await toastText(/Нет связи/), /отправится позже/);
+  assert.match(await toastText(/Нет связи/), /отправится, когда появится связь/);
   assert.match(await page.text("#v-place"), /Сеть падала дважды/);
   assert.match(await page.text("#syncText"), /в очереди: 1|В очереди: 1/);
   await page.tap({ text: "Изменить" });
@@ -557,7 +557,7 @@ test("a rating deleted offline disappears at once and the deletion is sent later
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await press("#fDelete");
   await press("#fDelete");
-  assert.match(await toastText(/Нет связи/), /удаление отправится позже/);
+  assert.match(await toastText(/Нет связи/), /удаление[^.]*отправится, когда появится связь/);
   assert.equal(await hash(), "#/place/porto");
   assert.doesNotMatch(await page.text("#v-place"), /Красиво, но сыро/);
   assert.equal((await pending()).length, 1);
@@ -620,10 +620,10 @@ test("two unsaved drafts for the same place can both be reached from the chips",
   await score("улица", 2);
   await score("шум", 2);
   await page.select("#fPlace", "Батуми");
-  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10");
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · нужно 5");
   assert.deepEqual(await chips(), ["Батуми (1 ответ)"]);
   await page.tap({ sel: ".draft-chip .linkbtn" });
-  assert.equal(await page.text("#fCounts"), "главные ★ 1 из 10");
+  assert.equal(await page.text("#fCounts"), "главные ★ 1 из 10 · нужно 5");
   assert.deepEqual(await chips(), ["Батуми (2 ответа)"], "the chip leads to the other draft, not to the one I am in");
 });
 

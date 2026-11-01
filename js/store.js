@@ -7,7 +7,16 @@ export class StoreError extends Error {
 
 const WAIT = 15000;
 const BAD = "GitHub прислал непонятный ответ — возможно, Wi-Fi просит войти на странице сети";
-const DOWN = "GitHub временно не отвечает";
+const DOWN = "GitHub сейчас не отвечает";
+const TEMP = /something went wrong|time ?out|timed out|try again/i;
+const short = s => { const t = String(s || "").split("\n")[0].replace(/\s+/g, " ").trim().replace(/[.:]$/, ""); return t.length > 120 ? t.slice(0, 117) + "…" : t; };
+const refused = (reason, write) => new StoreError("rejected", `${write ? "GitHub не принял правку" : "GitHub не отдал данные"}${short(reason) ? ": " + short(reason) : ""}`);
+async function failure(res, write) {
+  if (res.status < 400 || res.status >= 500) return new StoreError("http", DOWN);
+  let b = null;
+  try { b = await res.json(); } catch (e) {}
+  return b && typeof b === "object" ? refused(b.message, write) : new StoreError("http", BAD);
+}
 const hhmm = sec => new Date(sec * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 const body = async res => { let b; try { b = await res.json(); } catch (e) { throw new StoreError("http", BAD); } if (!b || typeof b !== "object") throw new StoreError("http", BAD); return b; };
 
@@ -74,7 +83,7 @@ export class GitHubStore {
       throw e instanceof StoreError ? e : new StoreError("offline", "Нет связи с GitHub");
     } finally { clearTimeout(timer); }
     if (res.status === 401) throw new StoreError("auth", "Ключ доступа не подходит или истёк");
-    if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) {
+    if (res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || Number(res.headers.get("retry-after")) > 0))) {
       const reset = Number(res.headers.get("x-ratelimit-reset")), after = Number(res.headers.get("retry-after"));
       const at = reset > 0 ? reset : after > 0 ? Date.now() / 1000 + after : 0;
       throw Object.assign(new StoreError("limit", at ? `GitHub временно ограничил запросы — до ${hhmm(at)}` : "GitHub временно ограничил запросы — на несколько минут"), { until: at ? at * 1000 : 0 });
@@ -84,17 +93,20 @@ export class GitHubStore {
 
   async gql(query, variables) {
     const res = await this.call("POST", "/graphql", { query, variables });
+    const write = /^\s*mutation/.test(query);
     if (res.status === 403) throw new StoreError("forbidden", "У ключа нет прав на запись");
-    if (!res.ok) throw new StoreError("http", DOWN);
+    if (!res.ok) throw await failure(res, write);
     const out = await body(res);
     if (Array.isArray(out.errors) && out.errors.length) {
       const m = out.errors.map(e => (e && e.message) || "").join("; ");
       const types = out.errors.map(e => (e && e.type) || "").join(" ");
+      if (/RATE_LIMITED/.test(types)) { const at = Number(res.headers.get("x-ratelimit-reset")) || 0; throw Object.assign(new StoreError("limit", at ? `GitHub временно ограничил запросы — до ${hhmm(at)}` : "GitHub временно ограничил запросы — на несколько минут"), { until: at ? at * 1000 : 0 }); }
       if (/expected.*head|head.*expected|is at .* but expected/i.test(m) || /STALE_DATA/.test(types)) throw new StoreError("conflict", "Данные в эту же секунду изменили с другого устройства");
       if (/FORBIDDEN/.test(types) || /not accessible by/i.test(m)) throw new StoreError("forbidden", "У ключа нет прав на запись");
       if (/NOT_FOUND/.test(types) || /could not resolve to a repository/i.test(m)) throw new StoreError("access", "Хранилище не найдено или у ключа нет к нему доступа");
       if (typeof console !== "undefined") console.warn("GitHub:", m);
-      throw new StoreError("graphql", DOWN);
+      if ((!m.trim() && !types.trim()) || TEMP.test(m) || /SERVICE_UNAVAILABLE|INTERNAL|TIMEOUT/.test(types)) throw new StoreError("graphql", DOWN);
+      throw refused(out.errors.map(e => (e && e.message) || "").find(Boolean) || types.trim(), write);
     }
     return out.data;
   }
@@ -159,7 +171,7 @@ export class GitHubStore {
     const base = `/repos/${this.owner}/${this.repo}/git`;
     const json = async res => {
       if (res.status === 403 || res.status === 404) throw new StoreError("forbidden", "У ключа нет прав на запись");
-      if (!res.ok) throw new StoreError("http", DOWN);
+      if (!res.ok) throw await failure(res, true);
       return body(res);
     };
     const tree = await json(await this.call("POST", base + "/trees", {

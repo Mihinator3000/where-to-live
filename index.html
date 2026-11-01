@@ -60,10 +60,11 @@
     <h1 class="sr-only" tabindex="-1">Карта</h1>
     <div class="map-top">
       <form class="search" id="searchForm" role="search">
-        <input type="search" id="searchInput" placeholder="Найти город или место" autocomplete="off" enterkeyhint="search" aria-label="Поиск места">
+        <input type="search" id="searchInput" placeholder="Найти город или место" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Поиск места">
         <div class="search-results" id="searchResults" hidden></div>
         <div class="sr-only" id="searchStatus" aria-live="polite"></div>
       </form>
+      <button type="button" class="chipbtn" id="mapHelpBtn" aria-label="Как пользоваться картой" title="Как пользоваться картой">?</button>
       <button type="button" class="chipbtn" id="layersBtn" aria-expanded="false" aria-controls="layersPanel">Слои</button>
     </div>
     <div class="map-note small" id="mapNote" hidden></div>
@@ -93,7 +94,7 @@
 
 <div id="tip" hidden></div>
 <div id="toast" role="status" aria-live="polite" hidden></div>
-<div id="updateBar" class="update-bar" role="status" hidden><span>Вышла новая версия приложения. Обновить — займёт секунду, черновики и очередь сохранятся.</span><button type="button" class="btn small" id="updateBtn">Обновить</button></div>
+<div id="updateBar" class="update-bar" role="status" hidden><span>Вышла новая версия приложения. Обновить — займёт секунду, черновики и очередь сохранятся.</span><button type="button" class="btn small" id="updateBtn">Обновить</button><button type="button" class="btn small ghost" id="updateLater">Позже</button></div>
 <noscript>Нужен JavaScript.</noscript>
 </body>
 </html>

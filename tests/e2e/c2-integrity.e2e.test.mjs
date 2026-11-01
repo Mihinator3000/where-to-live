@@ -728,7 +728,7 @@ test("unsent rows survive closing the app and still say which place, which field
   assert.equal(rows.length, 3);
   const has = (...res) => rows.some(r => res.every(re => re.test(r)));
   assert.ok(has(/Порту/, /Вопрос/, /где коворкинг/, /узнать про садики/), "the Porto row lost its place, field, my text or the other text: " + js(rows));
-  assert.ok(has(/Валенсия/, /Архетип/, /мегаполис у моря/, /город у моря и гор/), "the Valencia row lost its place, field, my value or the other value: " + js(rows));
+  assert.ok(has(/Валенсия/, /Тип места/, /мегаполис у моря/, /город у моря и гор/), "the Valencia row lost its place, field, my value or the other value: " + js(rows));
   assert.ok(has(/Оценк/, /Порту/, /Михаил/), "the rating row lost its place or person: " + js(rows));
   assert.match(await syncText(A), /Не отправлено: 3/);
 });

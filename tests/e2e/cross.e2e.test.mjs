@@ -708,7 +708,7 @@ test("after two visits the app opens offline from its cache with our data", { sk
     await reload();
     await booted();
     assert.equal(await h1(), "Порту", "the dossier opens from the cache");
-    assert.equal(await page.text("#syncText"), "Офлайн");
+    assert.equal(await page.text("#syncText"), "Нет связи");
     await page.eval(`location.hash = "#/places"`);
     await page.waitFor(`document.querySelectorAll(".prow").length === 6`, 3000, "cached list");
     assert.deepEqual(page.takeErrors(), []);

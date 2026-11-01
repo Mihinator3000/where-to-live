@@ -1,7 +1,7 @@
 import { esc, plural, reducedMotion } from "./util.js";
 
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://www.naturalearthdata.com/">Natural Earth</a>';
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">Natural Earth</a>';
 
 export class MapView {
   constructor(el, hooks) {

@@ -595,8 +595,8 @@ test("«Ещё N флагов скрыто» counts exactly the partner's flags 
     const hiddenIds = new Set(M.places.filter(p => hiddenWho(M, p.id).length).map(p => p.id));
     const want = M.full.allFlags().filter(f => hiddenIds.has(f.place)).length;
     const f = flagsHTML(M).html;
-    if (want) assert.match(f, new RegExp(`Ещё ${want} флаг`), `seed ${seed}`);
-    else assert.doesNotMatch(f, /Ещё \d+ флаг/, `seed ${seed}`);
+    assert.doesNotMatch(f, /Ещё \d+ флаг/, `seed ${seed}`);
+    if (hiddenIds.size) assert.match(f, /появятся после вашей оценки/, `seed ${seed}`);
   }
 });
 

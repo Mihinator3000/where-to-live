@@ -374,7 +374,7 @@ test("tapping a country shows who has been there and links to our places in it",
   assert.match(t, /были: Михаил, Вика/);
   assert.match(t, /Наши места: Порту/);
   assert.match(t, /Похожие страны/);
-  assert.match(t, /Добавить город в этой точке/);
+  assert.match(t, /Найти город в этой точке/);
   await page.tap({ text: "Порту", within: "#sheet", sel: "a" });
   await page.waitFor(`location.hash === "#/place/porto"`, 3000, "dossier");
 });
@@ -404,15 +404,15 @@ test("with countries coloured by an indicator, the country sheet puts that indic
   assert.equal(first, "Показатель на карте → Уровень цен в стране (США = 100)");
 });
 
-test("«Добавить город в этой точке» finds the town at the tapped point and adds it there", { skip }, async () => {
+test("«Найти город в этой точке» finds the town at the tapped point and adds it there", { skip }, async () => {
   await open({ local: view(42.0, 43.5, 6) });
   await reverseReturns(GORI);
   await tapMap(42.0, 43.5);
-  await page.tap({ text: "Добавить город в этой точке", within: "#sheet" });
-  await page.waitFor(`/Добавить место/.test(document.getElementById("sheetBody").innerText)`, 5000, "found-place sheet");
+  await page.tap({ text: "Найти город в этой точке", within: "#sheet" });
+  await page.waitFor(`/Добавить как место/.test(document.getElementById("sheetBody").innerText)`, 5000, "found-place sheet");
   assert.equal(await sheetTitle(), "Гори");
   assert.match(await sheetText(), /О стране/);
-  await page.tap({ text: "Добавить место", within: "#sheet" });
+  await page.tap({ text: "Добавить как место", within: "#sheet" });
   assert.match(await toastText(/Добавлено/), /Добавлено: Гори/);
   const p = await doc("places/gori.json");
   assert.equal(p.name, "Гори");
@@ -426,10 +426,10 @@ test("if no town is found at the tapped point the user is told and can try again
   await open({ local: view(42.0, 43.5, 6) });
   await reverseReturns({ error: "Unable to geocode" });
   await tapMap(42.0, 43.5);
-  await page.tap({ text: "Добавить город в этой точке", within: "#sheet" });
+  await page.tap({ text: "Найти город в этой точке", within: "#sheet" });
   assert.match(await toastText(/населённого/), /Здесь не нашлось населённого пункта/);
   const b = await page.eval(`(() => { const b = document.querySelector("#sheetBody [data-act=addhere]"); return { text: b.innerText, disabled: b.disabled }; })()`);
-  assert.deepEqual(b, { text: "Добавить город в этой точке", disabled: false });
+  assert.deepEqual(b, { text: "Найти город в этой точке", disabled: false });
 });
 
 test("a world city opens a sheet with population, climate chart and a marker that goes away on close", { skip }, async () => {
@@ -493,7 +493,7 @@ test("Enter searches OpenStreetMap and says when everything found is already our
   assert.match(t, /Наши места\s+Порту/i);
 });
 
-test("«Искать везде» finds a town in OpenStreetMap that opens with «Добавить место» and «О стране»", { skip }, async () => {
+test("«Искать везде» finds a town in OpenStreetMap that opens with «Добавить как место» and «О стране»", { skip }, async () => {
   await open();
   await typeSearch("Херцег");
   await page.tap({ text: "везде", within: "#searchResults" });
@@ -565,7 +565,7 @@ test("a town that is both a world city and an OpenStreetMap result is listed onc
   assert.equal(titles.length, 1, "same town listed twice:\n" + (await suggestions()));
 });
 
-test("when OpenStreetMap can't be reached, search and «Добавить город в этой точке» say so in Russian", { skip }, async () => {
+test("when OpenStreetMap can't be reached, search and «Найти город в этой точке» say so in Russian", { skip }, async () => {
   await open({ local: view(42.0, 43.5, 6) });
   await netDown();
   await searchEverywhere("Херцег");
@@ -574,7 +574,7 @@ test("when OpenStreetMap can't be reached, search and «Добавить гор�
   assert.match(t, /связ|интернет|недоступ/i, t);
   await page.fill("#searchInput", "");
   await tapMap(42.0, 43.5);
-  await page.tap({ text: "Добавить город в этой точке", within: "#sheet" });
+  await page.tap({ text: "Найти город в этой точке", within: "#sheet" });
   const msg = await toastText();
   assert.doesNotMatch(msg, /Failed to fetch/);
   assert.match(msg, /связ|интернет|недоступ/i);
@@ -603,7 +603,7 @@ test("adding an OpenStreetMap result saves its OSM id and country", { skip }, as
   await searchEverywhere("Бар");
   await page.tap({ text: "Бар, Черногория", within: "#searchResults" });
   await still();
-  await page.tap({ text: "Добавить место", within: "#sheet" });
+  await page.tap({ text: "Добавить как место", within: "#sheet" });
   assert.match(await toastText(/Добавлено/), /Добавлено: Бар/);
   const p = await doc("places/bar.json");
   assert.equal(p.country, "Черногория");
@@ -630,7 +630,7 @@ test("offline, a new place is queued, shown on the map, and sent when the networ
   await typeSearch("Будва");
   await pick("Будва");
   await page.tap({ text: "Добавить как место", within: "#sheet" });
-  assert.match(await toastText(/Нет связи/), /место отправится позже/);
+  assert.match(await toastText(/Нет связи/), /место[^.]*отправится, когда появится связь/);
   assert.deepEqual((await pending()).map(c => c.path), ["places/budva.json"]);
   assert.ok(await page.eval(`!!document.querySelector('${PIN("Будва")}')`), "queued place is on the map");
   assert.equal(await doc("places/budva.json"), null);
@@ -645,9 +645,9 @@ test("adding a town within 3 km of one of our places opens that place instead of
   await open({ local: view(41.632, 41.658, 12) });
   await tapMap(41.632, 41.658);
   assert.equal(await sheetTitle(), "Грузия");
-  await page.tap({ text: "Добавить город в этой точке", within: "#sheet" });
-  await page.waitFor(`/Добавить место/.test(document.getElementById("sheetBody").innerText)`, 5000, "found-place sheet");
-  await page.tap({ text: "Добавить место", within: "#sheet" });
+  await page.tap({ text: "Найти город в этой точке", within: "#sheet" });
+  await page.waitFor(`/Добавить как место/.test(document.getElementById("sheetBody").innerText)`, 5000, "found-place sheet");
+  await page.tap({ text: "Добавить как место", within: "#sheet" });
   assert.match(await toastText(/уже есть/), /Это место уже есть: Батуми/);
   assert.equal(await sheetTitle(), "Батуми");
   assert.deepEqual(await mockLog(page), [], "nothing written");

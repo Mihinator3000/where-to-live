@@ -257,7 +257,7 @@ test("map sheets, the layers panel, legends and search suggestions read cleanly"
   await page.key("Enter");
   await page.waitFor(`/OpenStreetMap/i.test(document.getElementById("searchResults").innerText) && !/Ищу/.test(document.getElementById("searchResults").innerText)`, 6000, "OpenStreetMap answered");
   await page.tap({ sel: "#searchResults button", text: "Херцег-Нови" });
-  await page.waitFor(`/Добавить место/.test(document.getElementById("sheetBody").innerText)`, 4000, "OpenStreetMap sheet");
+  await page.waitFor(`/Добавить как место/.test(document.getElementById("sheetBody").innerText)`, 4000, "OpenStreetMap sheet");
   bad.push(...(await scanNow("OpenStreetMap result")));
   await page.tap({ text: "О стране", within: "#sheetBody" });
   await page.waitFor(`document.querySelector("#sheetBody h3").innerText === "Черногория"`, 4000, "country sheet");
@@ -374,7 +374,7 @@ test("a trip in the dossier names the season and the work mode with the same wor
   const workLabel = await page.eval(`document.querySelector('[data-opt="mode"][data-val="удалёнка"]').innerText.trim()`);
   await show("#/place/porto");
   const line = await page.eval(`document.querySelector('.trip[data-rid="r1"] > .small.muted').innerText`);
-  assert.ok(line.includes(workLabel), `the form asks «Работали из поездки?» → «${workLabel}», the trip says «${line}»`);
+  assert.ok(line.toLowerCase().includes(workLabel.toLowerCase()), `the form asks «Работали из поездки?» → «${workLabel}», the trip says «${line}»`);
   assert.doesNotMatch(line, /удалёнка/);
   assert.match(line, /сезон/i, `«пик» alone does not say it is the season: «${line}»`);
 });
@@ -406,7 +406,7 @@ test("the data sources give the download date in Russian, without nested bracket
 test("the water-hardness hint says it is the score that never goes above 3, not the ppm reading", { skip }, async () => {
   await open({ files: SMALL, hash: "#/place/porto" });
   const hint = await factHint("tds");
-  assert.match(hint, /балл/, `under a ppm field «выше 3 не бывает» reads as «the reading is never above 3 ppm»: «${hint}»`);
+  assert.match(hint, /оценка за воду/, `under a ppm field «выше 3 не бывает» reads as «the reading is never above 3 ppm»: «${hint}»`);
 });
 
 test("a place with no ratings and no world data says it has no total yet instead of «— из 5 · заполнено 0%»", { skip }, async () => {
@@ -425,14 +425,16 @@ test("a rejected place does not say it is «пока не в рейтинге» 
 
 /* =================== numbers and counts =================== */
 
-test("the hidden-flags note agrees with its number: 1 флаг, 2 флага, 5 флагов, 11 флагов, 21 флаг", { skip }, async () => {
-  const forms = { 1: "флаг", 2: "флага", 5: "флагов", 11: "флагов", 21: "флаг" };
-  for (const [n, form] of Object.entries(forms)) {
-    const files = repo({ places: [PLACES[0], PLACES[3]], ratings: [rating("h1", "tbilisi", "Вика", all(1, MANY_CATS.slice(0, Number(n))))] });
+test("the hidden-flags note reads the same for 1, 2, 5, 11 or 21 hidden flags and gives no count", { skip }, async () => {
+  const seen = new Set();
+  for (const n of [1, 2, 5, 11, 21]) {
+    const files = repo({ places: [PLACES[0], PLACES[3]], ratings: [rating("h1", "tbilisi", "Вика", all(1, MANY_CATS.slice(0, n)))] });
     await open({ files, hash: "#/rank" });
     const t = (await page.text(".flags")).replace(/\s+/g, " ");
-    assert.match(t, new RegExp(`(^|\\D)${n}\\s+${form}(?![а-яё])`), `${n} hidden flags: «${t}»`);
+    assert.doesNotMatch(t, /\d+\s+флаг/, `${n} hidden flags are counted: «${t}»`);
+    seen.add(t);
   }
+  assert.equal(seen.size, 1, "the note changes with the number of hidden flags: " + [...seen].join(" | "));
 });
 
 test("search shows the population of a city of over a million in millions, not «2 120 тыс.»", { skip }, async () => {
@@ -495,7 +497,7 @@ test("the offline status and the «forget key» message speak plain words, not �
   await open({ files: SMALL, hash: "#/rank" });
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await reload();
-  await page.waitFor(`/Офлайн/.test(document.getElementById("syncText").innerText)`, 6000, "offline");
+  await page.waitFor(`/Нет связи/.test(document.getElementById("syncText").innerText)`, 6000, "offline");
   assert.doesNotMatch(await page.text("#syncText"), /кэш/, "status in the header");
   await show("#/settings");
   await page.tap({ text: "Забыть ключ на этом устройстве" });

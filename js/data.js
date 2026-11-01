@@ -5,7 +5,10 @@ export const DEFAULT_REPO = "Mihinator3000/where-to-live-data";
 const DIRS = ["places", "ratings", "weights"];
 
 const pathOf = (dir, id) => `${dir}/${id}.json`;
-const QUEUE = ["offline", "auth", "access", "timeout"];
+const QUEUE = ["offline", "auth", "access", "timeout", "http", "graphql", "limit"];
+const LATER = ["timeout", "http", "graphql", "limit"];
+const STEPS = [30000, 120000, 300000];
+const STUCK_TRIES = 6, STUCK_MS = 3600000;
 const getK = (d, k) => { const [a, b] = k.split("."); const x = d ? d[a] : undefined; return b ? (x || {})[b] : x; };
 const setK = (d, k, v) => { const [a, b] = k.split("."); if (!b) { d[a] = v; return; } const o = Object.assign({}, d[a]); if (v == null) delete o[b]; else o[b] = v; d[a] = o; };
 const same = (a, b) => JSON.stringify(a == null || a === "" ? null : a) === JSON.stringify(b == null || b === "" ? null : b);
@@ -82,6 +85,10 @@ export class Data extends EventTarget {
     this.docs = { places: [], ratings: [], weights: [] };
     this.oids = {};
     this.head = null;
+    this.loadedAt = null;
+    this.broken = [];
+    this.error = "";
+    this.notice = "";
     this.configure();
     this.emit();
   }
@@ -140,6 +147,24 @@ export class Data extends EventTarget {
     throw new StoreError("storage", "память браузера на этом устройстве переполнена");
   }
 
+  retryLater(e) {
+    clearTimeout(this.retryT);
+    if (!this.pending.length || !LATER.includes(e.code)) return;
+    if (!this.failSince) this.failSince = Date.now();
+    const step = STEPS[Math.min(this.tries || 0, STEPS.length - 1)];
+    this.tries = (this.tries || 0) + 1;
+    const wait = e.code === "limit" && e.until ? Math.max(step, e.until - Date.now() + 1000) : step;
+    this.limitUntil = e.code === "limit" ? Date.now() + wait : 0;
+    this.nextTry = Date.now() + wait;
+    this.retryT = setTimeout(() => { this.limitUntil = 0; this.refresh(); }, wait);
+  }
+
+  calm() { clearTimeout(this.retryT); this.tries = 0; this.limitUntil = 0; this.nextTry = 0; this.failSince = 0; }
+
+  get limited() { return (this.limitUntil || 0) > Date.now(); }
+
+  get stuck() { return this.status === "error" && this.errorCode !== "limit" && this.pending.length > 0 && !!this.failSince && ((this.tries || 0) >= STUCK_TRIES || Date.now() - this.failSince >= STUCK_MS); }
+
   fail(e) {
     this.status = e.code === "offline" ? "offline" : ["auth", "access", "forbidden"].includes(e.code) ? "auth" : "error";
     this.error = e.message;
@@ -164,6 +189,7 @@ export class Data extends EventTarget {
   async refresh() {
     if (!this.store) { this.status = "notoken"; this.emit(); return; }
     if (this.busy) return this.busy;
+    if (this.limited) { this.emit(); return; }
     this.busy = this.serial(async () => {
       this.status = "sync";
       this.emit();
@@ -175,9 +201,11 @@ export class Data extends EventTarget {
         this.status = this.pending.length ? "pending" : "live";
         this.error = res.bad.length ? "Не читаются файлы: " + res.bad.join(", ") : "";
         this.broken = res.bad;
+        if (!this.pending.length) this.calm();
       } catch (e) {
         this.adopt();
         this.fail(e);
+        this.retryLater(e);
       } finally {
         this.busy = null;
         this.emit();
@@ -187,7 +215,7 @@ export class Data extends EventTarget {
   }
 
   async poll() {
-    if (!this.store || this.busy) return;
+    if (!this.store || this.busy || this.limited) return;
     try {
       const head = await this.store.remoteHead();
       if (head !== this.head || this.pending.length || this.status === "error") await this.refresh();
@@ -213,6 +241,16 @@ export class Data extends EventTarget {
         this.pending = this.pending.slice(n);
         this.flushed = (this.flushed || 0) + new Set(batch.flatMap(c => c.messages)).size;
       } catch (e) {
+        if (e.code === "rejected") {
+          const mine = this.pending.slice(0, n), at = new Date().toISOString();
+          const out = [...new Set(mine.map(c => c.path))].map(p => Object.assign(fold(mine.filter(c => c.path === p)), { at, why: "rejected", reason: e.message }));
+          local.set("lost", this.lost.concat(out).slice(-50));
+          this.pending = this.pending.slice(n);
+          this.refused = (this.refused || 0) + out.length;
+          this.refusal = e.message;
+          local.set("pending", this.pending);
+          continue;
+        }
         if (e.code !== "clash") throw e;
         this.adopt();
         const keep = [], lost = [];
@@ -249,10 +287,13 @@ export class Data extends EventTarget {
         this.pending.push(...mine);
         if (!this.keep()) { this.pending = this.pending.filter(c => !mine.includes(c)); throw new StoreError("storage", "память браузера на этом устройстве переполнена"); }
         const since = new Date().toISOString();
+        if (this.limited) { this.emit(); return "queued"; }
         try {
           await this.flush();
           const lost = this.lost;
-          const clashed = lost.filter(l => l.at >= since && mine.some(c => c.path === l.path));
+          const refused = lost.filter(l => l.why === "rejected" && l.at >= since && mine.some(c => c.path === l.path));
+          if (refused.length) { this.refused = Math.max(0, (this.refused || 0) - refused.length); this.emit(); throw new StoreError("rejected", refused[0].reason); }
+          const clashed = lost.filter(l => l.why !== "rejected" && l.at >= since && mine.some(c => c.path === l.path));
           if (clashed.length) {
             local.set("lost", lost.filter(l => !clashed.includes(l)));
             this.clashed = Math.max(0, (this.clashed || 0) - clashed.length);
@@ -261,29 +302,33 @@ export class Data extends EventTarget {
             throw Object.assign(new StoreError("clash", "Это уже изменили на другом устройстве"), { paths: clashed.map(l => l.path) });
           }
           this.retire(mine);
+          this.calm();
           this.status = "live";
           this.error = "";
           this.emit();
           return "sent";
         } catch (e) {
           this.adopt();
-          if (e.code === "clash") throw e;
+          if (e.code === "clash" || e.code === "rejected") throw e;
           if (!QUEUE.includes(e.code)) {
             this.pending = this.pending.filter(c => !mine.includes(c));
             local.set("pending", this.pending);
             this.fail(e); this.emit(); throw e;
           }
           if (e.code === "offline") this.status = "pending"; else this.fail(e);
+          this.retryLater(e);
           this.emit();
           return "queued";
         }
       }
+      if (this.limited) { this.hold(changes, message, { code: "limit" }); this.emit(); return "queued"; }
       for (let round = 0; ; round++) {
         try {
           await this.flush();
           await this.store.commit(changes, message);
           this.adopt();
           this.retire(changes);
+          this.calm();
           this.status = "live";
           this.error = "";
           this.emit();
@@ -297,9 +342,11 @@ export class Data extends EventTarget {
             if (remote) e.theirs = overlap(remote, c).map(k => [k, getK(remote, k)]);
             this.emit(); throw e;
           }
+          if (e.code === "rejected") { this.emit(); throw e; }
           if (!QUEUE.includes(e.code)) { this.fail(e); this.emit(); throw e; }
           this.hold(changes, message, e);
           if (e.code === "offline") this.status = "pending"; else this.fail(e);
+          this.retryLater(e);
           this.emit();
           return "queued";
         }
@@ -339,7 +386,9 @@ export class Data extends EventTarget {
       const cur = this.view().places.find(p => p.id === id);
       if (!cur) throw new StoreError("gone", "Этого места больше нет в данных");
       const path = pathOf("places", id), queued = this.pending.some(c => c.path === path);
-      const remote = base && !queued && this.docOf(path), o = remote ? overlap(remote, { patch, base }) : [];
+      const remote = base && !queued && this.docOf(path), m = remote && lineMerge(remote, { patch, base });
+      if (m && m.add) Object.keys(m.add).forEach(k => { patch = Object.assign({}, patch, { [k]: patchDoc(remote, null, { [k]: m.add[k] })[k] }); base = Object.assign({}, base, { [k]: getK(remote, k) }); });
+      const o = remote ? overlap(remote, { patch, base }) : [];
       if (o.length) throw Object.assign(new StoreError("clash", "Это только что изменили на другом устройстве"), { paths: [path], theirs: o.map(k => [k, getK(remote, k)]) });
       const ch = this.placeChange(cur, patch, null, base);
       doc = JSON.parse(ch.content);

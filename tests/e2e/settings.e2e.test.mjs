@@ -82,7 +82,7 @@ async function saveCardOffline(id, field, value) {
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await page.fill(`#placeForm [name="${field}"]`, value);
   await page.tap({ text: "Сохранить карточку" });
-  assert.match(await toastText(/Нет связи/), /отправится позже/);
+  assert.match(await toastText(/Нет связи/), /отправится, когда появится связь/);
 }
 
 const CAPTURE_DOWNLOAD = `(() => {
@@ -320,8 +320,8 @@ test("forgetting the key disconnects the device and removes the cached data", { 
   assert.doesNotMatch(await page.text("#tokenForm .lbl"), /уже сохранён/);
   await go("#/rank");
   const t = await page.text("#v-rank");
-  assert.match(t, /Мест: 0 · оценок: 0/);
   assert.match(t, /Данные не подключены/);
+  assert.doesNotMatch(t, /Мест: 0 · оценок: 0/);
   await page.tap({ sel: "#syncBtn" });
   assert.equal(await page.eval("location.hash"), "#/settings");
 });
@@ -427,7 +427,7 @@ test("turning world indicators off removes data-only scores everywhere and the c
   assert.match(withData, /^\d\.\d$/, "Белград has a score from world data");
   await go("#/settings");
   assert.equal(await page.eval(`document.getElementById("useData").checked`), true);
-  await page.tap({ sel: "label.toggle", text: "Учитывать мировые показатели" });
+  await page.tap({ sel: "label.toggle", text: "Учитывать мировые данные" });
   assert.equal(await page.eval(`document.getElementById("useData").checked`), false);
   assert.equal(await stored("worldData"), false);
   await go("#/place/belgrad");
@@ -438,7 +438,7 @@ test("turning world indicators off removes data-only scores everywhere and the c
   await reload();
   await go("#/settings");
   assert.equal(await page.eval(`document.getElementById("useData").checked`), false, "still off after a reload");
-  await page.tap({ sel: "label.toggle", text: "Учитывать мировые показатели" });
+  await page.tap({ sel: "label.toggle", text: "Учитывать мировые данные" });
   await go("#/place/belgrad");
   assert.equal(await page.text("#v-place .bigscore b"), withData, "turning it back on restores the score");
 });
@@ -468,10 +468,10 @@ test("«Скачать копию данных» downloads a dated file with pla
   await page.eval(`localStorage.removeItem("mock:offline")`);
 });
 
-test("«Загрузить свежие данные» loads a rating added on another device", { skip }, async () => {
+test("«Обновить данные» loads a rating added on another device", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/settings" });
   await editRemote("ratings/r9.json", vikaRating("r9"));
-  await page.tap({ text: "Загрузить свежие данные" });
+  await page.tap({ sel: "#refreshBtn" });
   assert.match(await toastText(/Данные обновлены/), /оценок 5/);
   await go("#/rank");
   assert.match(await page.text("#v-rank"), /оценок: 5/);
@@ -522,7 +522,7 @@ test("opening the app offline shows the cached data and says so", { skip }, asyn
   await openApp(page, srv.url, { hash: "#/rank" });
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await reload();
-  assert.equal(await syncText(), "Офлайн");
+  assert.equal(await syncText(), "Нет связи");
   const t = await page.text("#v-rank");
   assert.match(t, /Порту/);
   assert.match(await page.text("#v-rank .banner"), /Нет связи/);
@@ -559,7 +559,7 @@ test("a GitHub server error shows «Ошибка связи» and clears on the 
     await page.tap({ sel: "#syncBtn" });
     await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 5000, "error shown");
     assert.equal(await syncDot(), "dot err");
-    assert.match(await page.text("#v-rank .banner.err"), /GitHub временно не отвечает/);
+    assert.match(await page.text("#v-rank .banner.err"), /GitHub сейчас не отвечает/);
   } finally {
     await page.eval(`localStorage.removeItem("test:status")`);
   }
@@ -601,9 +601,9 @@ test("an offline save waits in the queue, survives a reload and is sent when the
   assert.equal(await syncText(), "В очереди: 1");
   assert.equal(await pendingCount(), 1);
   await comeBack();
-  await page.waitFor(`document.getElementById("syncText").innerText === "Офлайн · в очереди: 1"`, 5000, "offline with queue");
+  await page.waitFor(`document.getElementById("syncText").innerText === "Нет связи · в очереди: 1"`, 5000, "offline with queue");
   await reload();
-  assert.equal(await syncText(), "Офлайн · в очереди: 1");
+  assert.equal(await syncText(), "Нет связи · в очереди: 1");
   assert.match(await page.text("#v-place"), /город у океана/, "my queued change is shown after the reload");
   assert.equal((await remoteDoc("places/porto.json")).archetype, "город у моря");
   await page.eval(`localStorage.removeItem("mock:offline"); window.dispatchEvent(new Event("online"))`);
@@ -651,7 +651,7 @@ test("«Выбросить» drops my clashed rating and keeps the other device'
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await page.tap({ sel: '[data-score="интернет"][data-v="2"]' });
   await page.tap({ sel: "#fSave" });
-  assert.match(await toastText(/Нет связи/), /отправится позже/);
+  assert.match(await toastText(/Нет связи/), /отправится, когда появится связь/);
   const r1 = await remoteDoc("ratings/r1.json");
   await editRemote("ratings/r1.json", Object.assign({}, r1, { review: "Правка с ноутбука", scores: Object.assign({}, r1.scores, { "интернет": 3 }) }));
   await page.eval(`localStorage.removeItem("mock:offline")`);

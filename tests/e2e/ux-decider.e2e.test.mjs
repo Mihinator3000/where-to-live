@@ -453,7 +453,7 @@ test("a typed rent shows the same score in its badge and in the subcategory tabl
   const sub = (await page.eval(`(() => { const tr = [...document.querySelectorAll(".subtable tbody tr")].find(r => /^Аренда на год/.test(r.cells[0].innerText.trim())); return tr.cells[1].innerText; })()`)).match(/\d\.\d/)[0];
   assert.equal(badge, "1.3");
   assert.equal(sub, badge);
-  assert.match(await page.eval(`document.querySelector('[name="fact_rent"]').closest(".fact").innerText`), /СПб: €550/);
+  assert.match(await page.eval(`document.querySelector('[name="fact_rent"]').closest(".fact").innerText`), /СПб: 550\s€/);
 });
 
 test("a world indicator replaced by a typed number is marked as not counted in the total", { skip }, async () => {
@@ -504,7 +504,7 @@ test("the hidden-rating note at the score offers «Показать всё ра�
 
 test("revealing Будва in its dossier gives its ranking row Вика's dot and year answer", { skip }, async () => {
   await open({ hash: "#/place/budva" });
-  await page.tap({ text: "Показать всё равно", within: ".trips" });
+  await page.tap({ text: "Показать всё равно", within: "#v-place .panel.pad" });
   await page.waitFor(`/Вика 6\\/10/.test(document.querySelector(".year").innerText.replace(/\\s+/g, " "))`, 3000, "year revealed");
   await goto("#/rank");
   await page.waitFor(`document.querySelectorAll("#rank a.row").length > 3`, 3000);

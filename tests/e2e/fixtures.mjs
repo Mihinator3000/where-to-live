@@ -32,6 +32,7 @@ export function repo({ places = PLACES, ratings = RATINGS, weights = [] } = {}) 
 
 export async function openApp(page, base, { files = repo(), token = true, me = "Михаил", intro = false, hash = "#/map", offline = false, local = {} } = {}) {
   await page.goto(base + "manifest.webmanifest", 50);
+  page.takeErrors();
   await page.eval(`(async () => {
     localStorage.clear(); sessionStorage.clear();
     for (const k of await caches.keys()) await caches.delete(k);

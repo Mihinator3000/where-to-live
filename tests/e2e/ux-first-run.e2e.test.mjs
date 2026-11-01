@@ -485,7 +485,7 @@ test("first run end to end: dismiss the intro, connect, choose who I am, add a t
   await page.waitFor(`/OpenStreetMap/i.test(document.getElementById("searchResults").innerText) && !/Ищу/.test(document.getElementById("searchResults").innerText)`, 6000, "OSM results");
   await page.tap({ text: "Херцег-Нови, Черногория", within: "#searchResults" });
   await page.waitFor(`(document.querySelector("#sheetBody h3") || {}).innerText === "Херцег-Нови"`, 4000, "geo sheet");
-  await page.tap({ text: "Добавить место", within: "#sheet" });
+  await page.tap({ text: "Добавить как место", within: "#sheet" });
   assert.match(await toastText(/Добавлено/), /Херцег-Нови/);
   await page.waitFor(`/кандидат/.test(document.getElementById("sheetBody").innerText) && !!document.querySelector('#sheetBody a[href^="#/rate/new/"]')`, 4000, "place sheet");
 
