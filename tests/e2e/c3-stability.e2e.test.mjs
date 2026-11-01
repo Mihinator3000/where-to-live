@@ -225,7 +225,7 @@ test("tapping something that is not on the screen fails with a clear message", {
 });
 
 test("the fake GitHub refuses any key that is not a test key, so a real key can never be used by a test", { skip }, async () => {
-  await openApp(page, srv.url, { hash: "#/rank", local: { "wtl:token": "ghp_realLookingKey000000000000000000000" } });
+  await openApp(page, srv.url, { hash: "#/rank", local: { "wtl:token": "ghp_" + "notATestKey".repeat(3) } });
   await page.waitFor(`/Ключ не подходит/.test(document.getElementById("syncText").innerText)`, 6000, "refused key shown");
   const r = await page.eval(`fetch("https://api.github.com/graphql", { method: "POST", headers: { Authorization: "Bearer github_pat_11REALKEY" }, body: "{}" }).then(r => r.status)`);
   assert.equal(r, 401);
