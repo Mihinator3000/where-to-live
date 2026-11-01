@@ -466,7 +466,7 @@ test("a GitHub outage that lasts 6 tries is reported as «давно не при
 test("without «Кто я» the hidden note says why it is hidden, not «до вашей»", () => {
   const a = place("alpha", "Альфа");
   const M = build({ places: [BASE, a], ratings: [rating("alpha", PARTNER, scoresAll(4))] }, { me: ME });
-  assert.equal(hiddenNote(M, "alpha"), `оценка ${PARTNER === "Вика" ? "Вики" : "Михаила"} скрыта до вашей`);
+  assert.equal(hiddenNote(M, "alpha"), `оценка ${PARTNER === "Вика" ? "Вики" : "Михаила"} скрыта до вашей оценки`);
   M.me = "";
   assert.match(hiddenNote(M, "alpha"), /скрыта, пока не выбрано, кто вы$/);
   assert.doesNotMatch(hiddenNote(M, "alpha"), /до вашей/);

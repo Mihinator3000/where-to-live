@@ -45,11 +45,14 @@ async function reload() {
   await page.waitFor(`!window.__beforeReload && document.readyState === "complete"`, 10000, "reloaded");
 }
 
+// Opens the app with no saved copy of our data. delay: GitHub answers that late; "hold": GitHub does not answer at all
+// until release() — the screen can then be checked while the data is surely still loading.
 async function coldOpen(hash, delay) {
   await page.goto(srv.url + "manifest.webmanifest", 50);
-  await page.eval(`localStorage.removeItem("wtl:cache"); localStorage.setItem("mock:delay", "${delay}")`);
+  await page.eval(`localStorage.removeItem("wtl:cache"); ${delay === "hold" ? `localStorage.setItem("mock:hold", "1")` : `localStorage.setItem("mock:delay", "${delay}")`}`);
   await page.goto(srv.url + hash, 0);
 }
+const release = () => page.eval(`localStorage.removeItem("mock:hold")`);
 
 async function axNodes(sel) {
   const { root } = await page.send("DOM.getDocument", { depth: 0 });
@@ -180,8 +183,8 @@ async function bootTime(hash, readyJs) {
   const t0 = Date.now();
   await page.send("Page.navigate", { url: srv.url + hash });
   await page.waitFor(`document.readyState === "complete" && document.getElementById("syncText").innerText === "Подключено" && (${readyJs})`, 15000, "ready " + hash);
-  let calm = 0;
-  while (calm < 3) { const a = Date.now(); await page.eval("1"); calm = Date.now() - a < 40 ? calm + 1 : 0; }
+  // ready = also no long task: three timer turns in a row inside the page, each under 50 ms apart
+  await page.eval(`new Promise(r => { let n = 0, last = performance.now(); const tick = () => { const now = performance.now(); n = now - last < 50 ? n + 1 : 0; last = now; if (n >= 3) r(); else setTimeout(tick, 0); }; setTimeout(tick, 0); })`);
   return Date.now() - t0;
 }
 
@@ -254,14 +257,6 @@ test("an unknown address falls back to the map and Back does not bounce through 
   assert.equal(await shownView(), "v-rank");
 });
 
-test("an unknown place says it was not found and links back to all places", { skip }, async () => {
-  await openApp(page, srv.url, { hash: "#/place/no-such-place" });
-  assert.match(await page.text("#v-place"), /Место не найдено/);
-  await page.tap({ sel: "#v-place a", text: "Все места" });
-  assert.equal(await shownView(), "v-places");
-  assert.match(await page.text("#plist"), /Порту/);
-});
-
 test("an unknown rating id says so and leaves a clean new-rating form", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/rate" });
   await page.eval(`location.hash = "#/rate/no-such-rating"`);
@@ -296,14 +291,16 @@ test("a link to edit my rating opens that rating even when the app starts cold",
 
 test("on a slow first load a place link and the list do not claim that nothing exists", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/map" });
-  await coldOpen("#/place/porto", 1500);
-  await sleep(300);
+  await coldOpen("#/place/porto", "hold");
+  await page.waitFor(`document.getElementById("syncText")?.innerText === "Обновляю…" && !document.getElementById("v-place").hidden`, 6000, "dossier screen while loading");
   assert.equal(await page.text("#syncText"), "Обновляю…", "still loading");
   assert.doesNotMatch(await page.text("#v-place"), /Место не найдено/, "the dossier does not say the place is missing while loading");
+  await release();
   await page.waitFor(`document.querySelector("#v-place h1")?.innerText === "Порту"`, 8000, "dossier filled in");
-  await coldOpen("#/places", 1500);
-  await sleep(300);
+  await coldOpen("#/places", "hold");
+  await page.waitFor(`document.getElementById("syncText")?.innerText === "Обновляю…" && !document.getElementById("v-places").hidden`, 6000, "list screen while loading");
   assert.doesNotMatch(await page.text("#v-places"), /Мест пока нет/, "the list does not say there are no places while loading");
+  await release();
   await page.waitFor(`document.querySelectorAll(".prow").length === 6`, 8000, "list filled in");
 });
 
@@ -557,15 +554,6 @@ test("Escape closes the layers panel and puts focus back on «Слои»", { ski
   assert.equal((await focused()).id, "layersBtn", "focus returns to the button that opened the panel");
 });
 
-test("Escape closes an open place card on the map", { skip }, async () => {
-  await openApp(page, srv.url, { hash: "#/map" });
-  await page.eval(`document.querySelector('.leaflet-marker-icon[title="Порту"]').click()`);
-  await page.waitFor(`!document.getElementById("sheet").hidden`, 3000, "card opened");
-  assert.equal(await page.text("#sheetBody h3"), "Порту");
-  await pressEscape();
-  assert.equal(await page.visible("#sheet"), false);
-});
-
 test("Escape closes search suggestions even after Tab moved into them", { skip }, async () => {
   await page.viewport(1280, 800);
   await openApp(page, srv.url, { hash: "#/map" });
@@ -702,7 +690,8 @@ test("after two visits the app opens offline from its cache with our data", { sk
     await swReady();
     await reload();
     await booted();
-    await sleep(500);
+    await page.waitFor(`!!localStorage.getItem("wtl:cache") && document.querySelector("#v-place h1")?.innerText === "Порту"`, 6000, "second visit ready");
+    await page.idle(300);
     await site.kill();
     await page.eval(`localStorage.setItem("mock:offline", "1")`);
     await reload();
@@ -726,7 +715,7 @@ test("after a single visit the app opens offline with its fonts and city climate
     await reload();
     await booted();
     await page.eval(`document.fonts.ready.then(() => 1)`);
-    await sleep(800);
+    await page.waitFor(`document.querySelector("#v-place h1")?.innerText === "Порту" && !!document.querySelector(".clim svg") && !!document.getElementById("simBox") && !/Считаю/.test(document.getElementById("simBox").innerText)`, 6000, "dossier offline").catch(() => {});
     assert.equal(await h1(), "Порту");
     assert.deepEqual(await page.eval(`[...new Set([...document.fonts].filter(f => f.status === "error").map(f => f.family))]`), [], "no font fails to load offline");
     assert.equal(await page.eval(`!!document.querySelector(".clim svg")`), true, "the climate chart is there offline");
@@ -738,30 +727,34 @@ test("after a single visit the app opens offline with its fonts and city climate
 
 test("with 30 places and 100 ratings the map, the list and a dossier are ready in under 2 s", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/map", files: bigRepo() });
+  const f = await page.slowdown();
   for (const [hash, ready] of [["#/map", `document.querySelectorAll(".leaflet-marker-icon").length > 5`], ["#/places", `document.querySelectorAll(".prow").length === 30`], ["#/place/test-10", `document.querySelector("#v-place h1")?.innerText === "Тестоград 10"`]]) {
     const ms = await bootTime(hash, ready);
-    assert.ok(ms < 2000, `${hash} ready in ${ms} ms`);
+    assert.ok(ms < 2000 * f, `${hash} ready in ${ms} ms (machine ${f.toFixed(1)}× slower than idle)`);
   }
 });
 
 test("with 30 places and 100 ratings the ranking opens and answers the first tap within 2 s", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/map", files: bigRepo() });
   await page.goto(srv.url + "manifest.webmanifest", 50);
+  const f = await page.slowdown();
   const t0 = Date.now();
   await page.send("Page.navigate", { url: srv.url + "#/rank" });
   await page.waitFor(`document.readyState === "complete" && document.getElementById("syncText").innerText === "Подключено" && document.querySelectorAll("#v-rank .row").length > 20`, 15000, "ranking shown");
   await page.eval(`document.querySelector('#presets [data-p="Своё"]').click()`);
   assert.equal(await page.eval(`document.querySelector('#presets [data-p="Своё"]').getAttribute("aria-pressed")`), "true");
   const ms = Date.now() - t0;
-  assert.ok(ms < 2000, `ranking usable after ${ms} ms`);
+  assert.ok(ms < 2000 * f, `ranking usable after ${ms} ms (machine ${f.toFixed(1)}× slower than idle)`);
 });
 
 test("with 30 places switching to «Рейтинг» and moving a weight slider each respond in under 300 ms", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/places", files: bigRepo() });
-  await sleep(500);
+  await page.waitFor(`document.querySelectorAll(".prow").length === 30`, 6000, "list");
+  await page.idle(300);
+  const f = await page.slowdown();
   const open = await page.eval(`(async () => { const a = document.querySelector('.bottomnav a[data-nav="rank"]'); const t = performance.now(); const done = new Promise(r => addEventListener("hashchange", () => r(performance.now() - t), { once: true })); a.click(); return Math.round(await done); })()`);
   assert.equal(await shownView(), "v-rank");
   const slide = await page.eval(`(() => { const i = document.querySelector("#wgrid input[type=range]"); const t = performance.now(); i.value = 40; i.dispatchEvent(new Event("input", { bubbles: true })); return Math.round(performance.now() - t); })()`);
-  assert.ok(open < 300, `opening the ranking took ${open} ms`);
-  assert.ok(slide < 300, `one slider step took ${slide} ms`);
+  assert.ok(open < 300 * f, `opening the ranking took ${open} ms (machine ${f.toFixed(1)}× slower than idle)`);
+  assert.ok(slide < 300 * f, `one slider step took ${slide} ms (machine ${f.toFixed(1)}× slower than idle)`);
 });

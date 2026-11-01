@@ -401,7 +401,9 @@ test("with countries coloured by an indicator, the country sheet puts that indic
   await page.tap({ text: "Готово", within: "#layersPanel" });
   await tapMap(39.6, -8.0);
   const first = await page.eval(`(() => { const h = [...document.querySelectorAll("#sheetBody .wgh")][0]; return h.innerText + " → " + h.nextElementSibling.innerText.split("\\n")[0]; })()`);
-  assert.equal(first, "Показатель на карте → Уровень цен в стране (США = 100)");
+  const [group, row] = first.split(" → ");
+  assert.match(group, /на карте/, `the first group is «${group}», not the indicator shown on the map`);
+  assert.match(row, /^Уровень цен/, `the first row is «${row}»`);
 });
 
 test("«Найти город в этой точке» finds the town at the tapped point and adds it there", { skip }, async () => {

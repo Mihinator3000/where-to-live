@@ -24,6 +24,7 @@
     }
     if (!url.startsWith("https://api.github.com/")) return real(input, init);
     await new Promise(r => setTimeout(r, Number(localStorage.getItem("mock:delay") || 150)));
+    while (localStorage.getItem("mock:hold") === "1") await new Promise(r => setTimeout(r, 40));
     if (localStorage.getItem("mock:offline") === "1") throw new TypeError("Failed to fetch");
     const auth = (init.headers && (init.headers.Authorization || init.headers.authorization)) || "";
     if (!/^Bearer github_pat_TEST/.test(auth)) return json({ message: "Bad credentials" }, 401);
@@ -49,4 +50,17 @@
     if (path.endsWith("/commits/main")) return new Response(head(), { status: 200, headers: { ETag: 'W/"' + head() + '"' } });
     return json({ message: "Not Found" }, 404);
   };
+  // window.__mockNet counts the requests the page has running (busy) and when the last one started or ended (at), for
+  // page.idle(). Test probes wrap window.fetch after this script; reading window.fetch hands out a counting wrapper of
+  // whatever is installed at that moment, so every request is counted once at the outermost layer, however many probes
+  // wrap it (inner layers may count it again, which keeps busy balanced).
+  const net = window.__mockNet = { busy: 0, at: performance.now() };
+  let top = window.fetch;
+  const counted = f => function (...args) {
+    net.busy++; net.at = performance.now();
+    let p;
+    try { p = Promise.resolve(f.apply(this, args)); } catch (e) { p = Promise.reject(e); }
+    return p.finally(() => { net.busy--; net.at = performance.now(); });
+  };
+  Object.defineProperty(window, "fetch", { configurable: true, enumerable: true, get: () => counted(top), set: f => { top = f; } });
 })();

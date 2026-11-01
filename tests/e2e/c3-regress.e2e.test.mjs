@@ -89,7 +89,15 @@ const richFiles = (extra = {}) => Object.assign(repo(RICH), extra);
 /* ---------- helpers ---------- */
 
 const booted = (timeout = 10000) => page.waitFor(`document.getElementById("syncText") && !["…", "Обновляю…"].includes(document.getElementById("syncText").innerText)`, timeout, "app booted");
-const hash = async h => { await page.eval(`location.hash = ${JSON.stringify(h)}`); await sleep(450); };
+const VIEWS = { map: "v-map", rank: "v-rank", places: "v-places", place: "v-place", rate: "v-rate", settings: "v-settings" };
+const frames = () => page.eval(`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`);
+// Opens a screen by its address and waits until it is shown, its data requests are done and it is drawn.
+const hash = async h => {
+  await page.eval(`location.hash = ${JSON.stringify(h)}`);
+  await page.waitFor(`(() => { const v = document.getElementById(${JSON.stringify(VIEWS[h.split("/")[1]])}); return !!v && !v.hidden && v.innerText.trim() !== ""; })()`, 4000, "screen " + h);
+  await page.idle(150);
+  await frames();
+};
 const viewText = () => page.eval(`document.querySelector(".view:not([hidden])").innerText`);
 const visibleText = sel => page.eval(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e && !e.closest("[hidden]") ? e.innerText : ""; })()`);
 const status = () => page.eval(`document.getElementById("syncText").innerText`);
@@ -167,7 +175,9 @@ async function grab(bag, where) { for (const it of await page.eval(COLLECT)) bag
 
 async function crawlOne(bag, tag, opts, { sheets = true } = {}) {
   await openApp(page, site.url, Object.assign({ hash: "#/map", intro: true }, opts));
-  await sleep(500);
+  await page.waitFor(`!!document.querySelector('[data-act="introok"]')`, 4000, "help card");
+  await page.idle(200);
+  await frames();
   await grab(bag, tag + " map + help");
   await page.eval(`document.querySelector('[data-act="introok"]')?.click()`);
   for (const h of ["#/rank", "#/places", "#/rate", "#/settings"]) { await hash(h); if (h === "#/rank") await page.eval(`document.getElementById("wdetails") && (document.getElementById("wdetails").open = true)`); await grab(bag, tag + " " + h); }
@@ -177,7 +187,7 @@ async function crawlOne(bag, tag, opts, { sheets = true } = {}) {
   await hash("#/map");
   for (const id of ids) {
     await page.eval(`(async () => ${S}.mapView.hooks.onPlace(${JSON.stringify(id)}))()`); await sleep(150);
-    await page.eval(`document.querySelector('[data-act="simplace"]')?.click()`); await sleep(500);
+    await page.eval(`document.querySelector('[data-act="simplace"]')?.click()`); await page.waitFor(`!/Считаю/.test(document.getElementById("sheetBody").innerText)`, 4000, "similar places").catch(() => {}); await page.idle(150);
     await grab(bag, tag + " map card " + id);
   }
   for (const iso of ["PRT", "RUS"]) {
@@ -193,7 +203,7 @@ async function crawlOne(bag, tag, opts, { sheets = true } = {}) {
   await page.eval(`document.getElementById("sheetClose").click()`);
   await page.eval(`document.getElementById("layersBtn").click()`); await sleep(150);
   for (const [sel, v] of [["#lyCountry", "wgi_pv"], ["#lyCity", "tx_jul"], ["#lyCity", "predict"]]) {
-    await page.eval(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s || ![...s.options].some(o => o.value === ${JSON.stringify(v)} && !o.disabled)) return; s.value = ${JSON.stringify(v)}; s.dispatchEvent(new Event("change", { bubbles: true })); })()`); await sleep(500);
+    await page.eval(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); if (!s || ![...s.options].some(o => o.value === ${JSON.stringify(v)} && !o.disabled)) return; s.value = ${JSON.stringify(v)}; s.dispatchEvent(new Event("change", { bubbles: true })); })()`); await page.idle(200); await frames();
     await grab(bag, tag + " layers " + v);
   }
 }
@@ -322,7 +332,7 @@ test("«Обновить» with an unsaved edit in a dossier card does not silen
   await page.fill('#placeForm [name="questions"]', "Где зимовать?\nЕсть ли педиатр рядом?");
   await page.eval("window.__beforeReload = 1");
   await page.eval(`document.getElementById("updateBtn").click()`);
-  await sleep(1500);
+  await page.waitFor(`window.__beforeReload !== 1 || !!document.getElementById("updateBtn")?.dataset.armed`, 6000, "reloaded or warned").catch(() => {});
   const stayed = await page.eval("window.__beforeReload === 1").catch(() => false);
   let kept = false, warned = false;
   if (stayed) warned = /сохран|не сохран|потеря/i.test(await page.eval(`[...document.querySelectorAll("#updateBar, #toast, .msg, .banner")].filter(e => !e.closest("[hidden]")).map(e => e.innerText).join(" ")`));
@@ -503,7 +513,8 @@ test("after a clash found while sending the queue on the map, the toast points t
   assert.match(await status(), /^Не отправлено: 1/);
   await page.tap({ sel: "#syncBtn" });
   await page.waitFor(`location.hash === "#/rank"`, 4000, "ranking opened");
-  assert.match(await visibleText("#v-rank .banner.err"), /Не отправлено: это же изменили на другом устройстве[\s\S]*Тип места: «город у моря» \(сейчас «горы»\)/);
+  const b = await visibleText("#v-rank .banner.err");
+  for (const re of [/Не отправлено/, /на другом устройстве/, /Тип места: «город у моря» \(сейчас «горы»\)/]) assert.match(b, re, `«${b}»`);
 });
 
 test("on the map the status button never says it shows unsent changes while a tap on it only refreshes", { skip }, async () => {
@@ -515,7 +526,7 @@ test("on the map the status button never says it shows unsent changes while a ta
   await hash("#/map");
   const said = await page.eval(`document.getElementById("syncAction").textContent + " " + document.getElementById("syncText").textContent`);
   await page.tap({ sel: "#syncBtn" });
-  await sleep(500);
+  await page.idle(200);
   const went = await page.eval("location.hash");
   if (/неотправлен/i.test(said)) assert.equal(went, "#/rank", `the button is announced as «${said}», but tapping it stays on the map and only retries the connection`);
 });

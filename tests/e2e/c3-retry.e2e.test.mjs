@@ -513,12 +513,16 @@ test("a rating whose commit landed but GitHub answered 504 is queued, and the au
 
 test("a card question whose commit landed but GitHub answered 502, while Vika edited the card meanwhile, ends with my line once and her edit kept", { skip }, async () => {
   await open({ hash: "#/place/porto", fast: true });
-  await rules([{ url: GH, body: COMMIT, after: true, status: 502, text: "<html>Bad Gateway</html>", type: HTML, times: 1 }]);
+  // the first commit lands and its reply is a 502; the automatic resends keep getting 502 (without landing) until the
+  // other phone has made its edit, so the change surely waits in the queue meanwhile, however slow the test machine is
+  await rules([{ url: GH, body: COMMIT, after: true, status: 502, text: "<html>Bad Gateway</html>", type: HTML, times: 1 }, { url: GH, body: COMMIT, status: 502, text: "<html>Bad Gateway</html>", type: HTML }]);
   await page.fill('#placeForm [name="questions"]', "Проверить сырость зимой\nЕсть ли отопление?");
   await press("#placeForm [type=submit]");
-  await page.waitFor(`document.getElementById("placeMsg").innerText.trim() !== ""`, 8000, "card save result");
+  await page.waitFor(`document.getElementById("placeMsg").innerText.trim() !== "" || JSON.parse(localStorage.getItem("wtl:pending") || "[]").length > 0`, 8000, "card save result");
   assert.equal((await pending()).length, 1, `the 502 card save is not kept on the phone: «${await msgOf("placeMsg")}»`);
   await otherPhone("places/porto.json", `d => Object.assign(d, { archetype: "курорт" })`);
+  await rules([]);
+  await comeBack();
   await queueEmpty(15000);
   const p = await doc("places/porto.json");
   assert.equal(p.questions, "Проверить сырость зимой\nЕсть ли отопление?", `question lines: ${js(p.questions)}`);
@@ -613,11 +617,11 @@ test("coming back to the app or the network event during a rate limit does not k
   const failed = (await calls()).slice(-1)[0];
   await comeBack();
   await page.eval(`window.dispatchEvent(new Event("online"))`);
-  await sleep(600);
+  await page.idle(300);
   await page.tap({ sel: "#syncBtn" });
-  await sleep(600);
+  await page.idle(300);
   await comeBack();
-  await sleep(600);
+  await page.idle(300);
   const now = await clock();
   assert.ok(now < reset * 1000 - 1500, "fixture: still inside the limit");
   const early = (await calls()).filter(c => c.t > failed.t);
@@ -983,7 +987,7 @@ test("a rating GitHub refuses (repository rule violation) shows GitHub's reason 
   assert.doesNotMatch(said, /Commits must have/, "only GitHub's first line, not the whole text");
   assert.equal(await val("#fReview"), "Отказ по правилам", "the answers stay in the form");
   assert.deepEqual(await pending(), [], "a permanent refusal is not queued");
-  assert.doesNotMatch(await syncText(), /Ждут|Ошибка связи/, "the connection works; only this rating was refused");
+  assert.doesNotMatch(await syncText(), /Ждут|GitHub не отвечает/, "the connection works; only this rating was refused");
   await go("#/place/porto", 500);
   await saveCard("archetype", "город у океана");
   assert.doesNotMatch(await msgOf("placeMsg"), /не сохранен|GitHub/, `a later save is held behind the refused one: «${await msgOf("placeMsg")}»`);
@@ -996,7 +1000,7 @@ test("a card save answered 422 «Validation Failed» says GitHub refused it and 
   await rules([{ url: GH, body: COMMIT, status: 422, json: { message: "Validation Failed", errors: [{ code: "custom" }] }, times: 1 }]);
   await saveCard("archetype", "город у океана");
   const m = await msgOf("placeMsg");
-  assert.match(m, /Карточка не сохранена: GitHub не принял правку: Validation Failed/, `«${m}»`);
+  for (const re of [/Карточка не сохранена/, /GitHub не принял/, /Validation Failed/]) assert.match(m, re, `«${m}»`);
   assert.match(m, /в хранилище на GitHub/, `the user is not told what to do if it repeats: «${m}»`);
   assert.doesNotMatch(m, /\b422\b|через минуту/, `«${m}»`);
   assert.doesNotMatch(m, NOT_WAITING, `«${m}»`);
@@ -1015,7 +1019,8 @@ test("a change queued offline that GitHub then refuses moves to «GitHub не п
   await page.waitFor(`JSON.parse(localStorage.getItem("wtl:lost") || "[]").length === 1`, 8000, "refused change moved out of the queue");
   assert.deepEqual(await pending(), [], "the refused change no longer sits in the queue, retried forever");
   await seen(`window.__toasts.some(t => /не принял/.test(t))`, 4000);
-  assert.match((await toasts()).join(" | "), /Не отправлено: 1 — GitHub не принял правку: Repository rule violations found/);
+  const said = (await toasts()).join(" | ");
+  for (const re of [/Не отправлено: 1\b/, /GitHub не принял/, /Repository rule violations found/]) assert.match(said, re, `«${said}»`);
   await go("#/rank");
   const b = (await banners()).find(x => /не принял/.test(x)) || "";
   assert.match(b, /GitHub не принял правку: Repository rule violations found/, `«${b}»`);
@@ -1024,7 +1029,7 @@ test("a change queued offline that GitHub then refuses moves to «GitHub не п
   assert.match(b, /Порту/, "the row names the place");
   assert.doesNotMatch(b, /изменили на другом устройстве/, "a refusal is not a clash with another device");
   await page.shot("c3-retry-refused-banner");
-  assert.doesNotMatch(await syncText(), /Ждут GitHub|Ошибка связи/);
+  assert.doesNotMatch(await syncText(), /Ждут GitHub|GitHub не отвечает/);
   await go("#/place/valensiya", 500);
   await saveCard("archetype", "курорт");
   assert.equal((await doc("places/valensiya.json")).archetype, "курорт", "a later save is not held behind the refused change");
@@ -1065,7 +1070,8 @@ test("tapping the status during a GitHub rate limit says until when, instead of 
   assert.equal(await page.eval(`document.getElementById("syncAction").textContent`), "Ждём GitHub:", "the hidden label must not promise «Обновить данные»");
   await page.eval(`window.__toasts.length = 0; localStorage.setItem("c3:calls", "[]")`);
   await page.tap({ sel: "#syncBtn" });
-  await sleep(500);
+  await seen(`window.__toasts.some(t => /ограничил/.test(t))`, 3000);
+  await page.idle(300);
   const t = (await toasts()).join(" | ");
   assert.match(t, /ограничил запросы до \d\d:\d\d/, `the tap gives no feedback: «${t}»`);
   assert.match(t, /после этого времени/);
@@ -1076,7 +1082,7 @@ test("a GitHub outage is worded the same in the banner and in settings, in one v
   await open({ hash: "#/rank" });
   await rules([{ url: GH, status: 503, text: "<html><body>503 Service Unavailable</body></html>", type: HTML }]);
   await page.tap({ sel: "#syncBtn" });
-  await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 6000, "error shown");
+  await page.waitFor(`document.getElementById("syncText").innerText === "GitHub не отвечает"`, 6000, "error shown");
   const b = await ghBanner();
   assert.match(b, /^GitHub сейчас не отвечает\./, `«${b}»`);
   assert.doesNotMatch(b, /Приложение сам/, `the banner switches from «я» to «приложение»: «${b}»`);

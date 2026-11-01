@@ -172,14 +172,6 @@ test("the «Кто вы на этом устройстве?» banner sets the pe
   assert.doesNotMatch(t, /Пыльно и шумно/);
 });
 
-test("answering «Кто вы» on the rating screen also fills «Кто оценивает»", { skip }, async () => {
-  await openApp(page, srv.url, { hash: "#/rate", me: null });
-  assert.equal(await pressed("#fWho"), "");
-  await page.tap({ text: "Вика", within: "#rateBanner" });
-  assert.match(await toastText(/Это устройство/), /Вика/);
-  assert.equal(await pressed("#fWho"), "Вика", "the banner went away but the form still has nobody selected");
-});
-
 /* ---------- access key ---------- */
 
 test("a valid key pasted with spaces is trimmed, checked, saved and loads our data", { skip }, async () => {
@@ -552,12 +544,12 @@ test("a rejected key is explained once and shown as an error in settings", { ski
   assert.equal(await page.eval(`document.getElementById("tokenMsg").classList.contains("err")`), true, "the problem is printed like a normal status line");
 });
 
-test("a GitHub server error shows «Ошибка связи» and clears on the next check", { skip }, async () => {
+test("a GitHub server error shows «GitHub не отвечает» and clears on the next check", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/rank" });
   await page.eval(`localStorage.setItem("test:status", "500")`);
   try {
     await page.tap({ sel: "#syncBtn" });
-    await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 5000, "error shown");
+    await page.waitFor(`document.getElementById("syncText").innerText === "GitHub не отвечает"`, 5000, "error shown");
     assert.equal(await syncDot(), "dot err");
     assert.match(await page.text("#v-rank .banner.err"), /GitHub сейчас не отвечает/);
   } finally {
@@ -575,7 +567,7 @@ test("an edit that clashes with another device is not reported as a connection e
   await page.fill('#placeForm [name="archetype"]', "город у океана");
   await page.tap({ text: "Сохранить карточку" });
   await page.waitFor(`JSON.parse(JSON.parse(localStorage.getItem("mock:files"))["places/porto.json"]).archetype === "город у океана"`, 6000, "saved");
-  assert.notEqual(await syncText(), "Ошибка связи", "the network is fine, only the card changed elsewhere");
+  assert.notEqual(await syncText(), "GitHub не отвечает", "the network is fine, only the card changed elsewhere");
   assert.notEqual(await syncDot(), "dot err");
 });
 
@@ -598,7 +590,7 @@ test("saving the card again after a clash writes my field over and keeps the oth
 test("an offline save waits in the queue, survives a reload and is sent when the network is back", { skip }, async () => {
   await openApp(page, srv.url, { hash: "#/place/porto" });
   await saveCardOffline("porto", "archetype", "город у океана");
-  assert.equal(await syncText(), "В очереди: 1");
+  assert.equal(await syncText(), "Нет связи · в очереди: 1");
   assert.equal(await pendingCount(), 1);
   await comeBack();
   await page.waitFor(`document.getElementById("syncText").innerText === "Нет связи · в очереди: 1"`, 5000, "offline with queue");

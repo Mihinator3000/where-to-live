@@ -2,7 +2,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { launch, CHROME } from "./cdp.mjs";
 import { serve } from "./server.mjs";
-import { openApp, repo, PLACES, mockFiles } from "./fixtures.mjs";
+import { openApp, repo, PLACES, mockFiles, settleMap } from "./fixtures.mjs";
 
 // Persona «первый запуск»: someone opens the site for the first time on an iPhone, knows nothing,
 // has no key and no data yet. Synthetic data only; GitHub and Nominatim are mocked.
@@ -349,7 +349,7 @@ test("on a phone the first sync with no saved map position shows all our places,
   await page.waitFor(`document.getElementById("syncText").innerText === "Подключено"`, 5000, "connected");
   await page.tap({ sel: ".bottomnav a", text: "Карта" });
   await page.waitFor(`document.querySelectorAll(".leaflet-marker-icon").length > 0`, 5000, "pins");
-  await sleep(600);
+  await settleMap(page);
   const out = await page.eval(`(async () => { const s = ${APP}; const m = s.mapView.map, box = document.getElementById("map").getBoundingClientRect(), top = document.querySelector(".map-top").getBoundingClientRect().bottom;
     return s.M.places.filter(p => { const pt = m.latLngToContainerPoint([p.lat, p.lon]); const y = box.top + pt.y; return pt.x < 8 || pt.x > box.width - 8 || y < top || y > box.bottom - 8; }).map(p => p.name); })()`);
   assert.deepEqual(out, [], "after connecting, these places are off-screen or under the search bar, so a newcomer sees almost nothing of our data");
@@ -366,7 +366,7 @@ test("while the first key is being checked the button shows it is busy and a sec
     const first = await page.eval(`window.__gql`);
     await page.eval(`document.querySelector('#tokenForm button[type="submit"]').click()`);
     await page.waitFor(`document.getElementById("syncText").innerText === "Подключено"`, 10000, "connected");
-    await sleep(1200);
+    await page.idle(400);
     const calls = await page.eval(`window.__gql`);
     assert.ok(b.disabled || /Проверяю/.test(b.text), `the button still reads «${b.text}» and can be pressed while the key is checked`);
     assert.ok(calls <= first + 1, `a second tap started another check: ${calls} GitHub queries`);

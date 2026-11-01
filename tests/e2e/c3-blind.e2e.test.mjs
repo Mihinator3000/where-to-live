@@ -109,7 +109,7 @@ async function sheetOf(id, name, zoom = 8) {
 }
 
 // what the screen would show if the partner had not rated: the hidden note is the only allowed difference
-const NOOWN = s => String(s).replace(/оценк[аи] (Вики|Михаила)( и [А-Яа-яё]+)? скрыт[аы] до вашей/g, "NOOWN").replace(/только мировые данные/g, "NOOWN").replace(/\s+/g, " ").trim();
+const NOOWN = s => String(s).replace(/оценк[аи] (Вики|Михаила)( и [А-Яа-яё]+)? скрыт[аы] до вашей( оценки)?/g, "NOOWN").replace(/только мировые данные/g, "NOOWN").replace(/\s+/g, " ").trim();
 
 const pinsNow = () => page.eval(`[...document.querySelectorAll(".leaflet-marker-icon")].map(m => ({ title: m.title, label: m.getAttribute("aria-label"), text: m.innerText.trim(), style: (m.querySelector(".pin") || m).getAttribute("style"), cls: (m.querySelector(".pin") || m).className })).sort((a, b) => a.title.localeCompare(b.title))`);
 const rankNow = () => page.eval(`[...document.querySelectorAll("#rank a.row")].map(r => ({ pos: r.querySelector(".pos").innerText.trim(), name: r.querySelector(".name b").innerText, score: r.querySelector(".score").innerText.replace(/\\s+/g, " "), chips: [...r.querySelectorAll(".chip")].map(c => c.innerText), dots: [...r.querySelectorAll(".dot")].map(d => d.className + "@" + d.style.left + "@" + d.dataset.tip), bar: (r.querySelector(".bar") || {}).outerHTML || "", sr: (r.querySelector(".sr-only") || {}).innerText || "" }))`);
@@ -258,7 +258,7 @@ test("the map card of a hidden place shows only the world-data total, with no pe
   const [a, b] = cards;
   assert.equal(a.big, b.big, "the big number on the card moved because of her hidden rating");
   assert.equal(a.per, "", "per-person totals are listed: " + a.per);
-  assert.doesNotMatch(a.t, /год здесь|Вика 9\/10|4\.8/, "her year answer or her total shows on the card");
+  assert.doesNotMatch(a.t, /год здесь|здесь год:|Вика 9\/10|4\.8/, "her year answer or her total shows on the card");
   assert.match(a.t, /Оценка Вики скрыта, пока вы не оцените место сами/);
 });
 
@@ -434,7 +434,7 @@ test("switching «Кто я» with the other person's unsaved rating in the form
   await page.waitFor(`document.getElementById("fPlace").value === "hertseg-novi"`, 4000, "form");
   await press('[data-score="интернет"][data-v="2"]');
   await page.fill("#fReview", "ЧЕРНОВИК-ВИКИ-КОКОС");
-  await sleep(500);
+  await page.waitFor(`(localStorage.getItem("wtl:draft") || "").includes("ЧЕРНОВИК-ВИКИ-КОКОС")`, 4000, "draft saved");
   await go("#/settings");
   await page.tap({ sel: '#meSeg [data-me="Михаил"]' });
   await go("#/rate");
@@ -524,8 +524,10 @@ test("every screen that would show a hidden place says whose rating is hidden an
   await go("#/places");
   assert.match((await placesNow()).find(r => r.name === "Батуми").meta.join(" "), /оценка Вики скрыта до вашей/);
   await go("#/place/batumi");
-  assert.match(await viewText("v-place"), /Оценка Вики скрыта, пока вы не оцените место сами\. Показать всё равно/);
-  assert.match(await sheetOf("batumi", "Батуми"), /Оценка Вики скрыта, пока вы не оцените место сами/);
+  const dossier = await viewText("v-place");
+  for (const re of [/Оценка Вики скрыта/, /пока вы не оцените/, /Показать всё равно/]) assert.match(dossier, re, `dossier: «${dossier}»`);
+  const sheet = await sheetOf("batumi", "Батуми");
+  for (const re of [/Оценка Вики скрыта/, /пока вы не оцените/]) assert.match(sheet, re, `map card: «${sheet}»`);
 });
 
 test("the dossier of a hidden place says how to see her rating: rate it yourself with «Оценить», or «Показать всё равно»", { skip }, async () => {

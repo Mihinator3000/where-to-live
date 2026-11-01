@@ -2,7 +2,7 @@ import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { launch, CHROME } from "./cdp.mjs";
 import { serve } from "./server.mjs";
-import { openApp, repo, PLACES } from "./fixtures.mjs";
+import { openApp, repo, PLACES, settleMap } from "./fixtures.mjs";
 
 const skip = !CHROME && "no Chrome";
 let srv, page;
@@ -88,7 +88,7 @@ async function openSheetFor(q) {
   await page.waitFor(`!document.getElementById("searchResults").hidden && !!document.querySelector("#searchResults button[data-i]")`, 4000, "suggestions for " + q);
   await page.tap({ sel: "#searchResults button", nth: 0 });
   await page.waitFor(`!document.getElementById("sheet").hidden && !!document.querySelector("#sheetBody h3")`, 4000, "sheet");
-  await sleep(1000);
+  await settleMap(page);
 }
 
 const VIS_FN = `const vis = e => { if (e.closest("[hidden]")) return false; for (let d = e.closest("details"); d; d = d.parentElement.closest("details")) if (!d.open && !(e.closest("summary") && e.closest("summary").parentElement === d)) return false; const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none"; };`;
@@ -174,9 +174,9 @@ async function layoutProblems(tag) {
   return p;
 }
 
-async function sweep(w, h, side) {
+async function sweep(w, h, side, dark) {
   const problems = [];
-  for (const dark of [false, true]) for (const ds of ["empty", "standard", "rich"]) {
+  for (const ds of ["empty", "standard", "rich"]) {
     await page.viewport(w, h, { dark });
     await open(ds, "#/map", { intro: true });
     if (side) await insets(IPHONE_SIDEWAYS);
@@ -197,14 +197,14 @@ async function sweep(w, h, side) {
 
 /* ---------- layout sweeps: every width, both themes, three data sets ---------- */
 
-for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [768, 1024], [1024, 768], [1440, 900]]) {
-  test(`at ${w}×${h} every screen fits with no data, the usual data and 30 long-named places, light and dark: no sideways scroll, nothing sticks out, no controls overlap`, { skip, timeout: 120000 }, async () => {
-    assert.deepEqual(await sweep(w, h, false), []);
+for (const [w, h] of [[320, 568], [360, 740], [390, 844], [430, 932], [768, 1024], [1024, 768], [1440, 900]]) for (const dark of [false, true]) {
+  test(`at ${w}×${h} ${dark ? "dark" : "light"} every screen fits with no data, the usual data and 30 long-named places: no sideways scroll, nothing sticks out, no controls overlap`, { skip, timeout: 120000 }, async () => {
+    assert.deepEqual(await sweep(w, h, false, dark), []);
   });
 }
 
-test("on a phone turned sideways (844×390) every screen fits with all three data sets, light and dark", { skip, timeout: 120000 }, async () => {
-  assert.deepEqual(await sweep(844, 390, true), []);
+for (const dark of [false, true]) test(`on a phone turned sideways (844×390) ${dark ? "dark" : "light"} every screen fits with all three data sets`, { skip, timeout: 120000 }, async () => {
+  assert.deepEqual(await sweep(844, 390, true, dark), []);
 });
 
 test("no number is split from its unit or broken across two lines, on 320, 360 and 390 px phones", { skip, timeout: 120000 }, async () => {
@@ -310,12 +310,15 @@ test("on an iPhone turned sideways the header, the map search and page content s
     await open("standard", route);
     await insets(IPHONE_SIDEWAYS);
     await sleep(250);
-    const r = await page.eval(`(() => { const b = s => { const e = [...document.querySelectorAll(s)].find(x => x.getBoundingClientRect().width > 0); return e ? e.getBoundingClientRect() : null; }; return { brand: b(".brand").left, tools: b(".appbar-tools").right, search: b("#searchInput")?.left ?? null, h1: b(".view:not([hidden]) h1")?.left ?? null, firstTab: b(".bottomnav a svg").left, lastTab: [...document.querySelectorAll(".bottomnav a svg")].pop().getBoundingClientRect().right }; })()`);
+    const r = await page.eval(`(() => { const b = s => { const e = [...document.querySelectorAll(s)].find(x => x.getBoundingClientRect().width > 0); return e ? e.getBoundingClientRect() : null; }; const lr = s => { const x = b(s); return x ? [x.left, x.right] : null; }; return { brand: b(".brand").left, tools: b(".appbar-tools").right, settings: lr('.appbar a[data-nav="settings"]'), search: lr("#searchInput"), layers: lr("#layersBtn"), h1: lr(".view:not([hidden]) h1"), firstTab: b(".bottomnav a svg").left, lastTab: [...document.querySelectorAll(".bottomnav a svg")].pop().getBoundingClientRect().right }; })()`);
     const L = IPHONE_SIDEWAYS.left, R = 844 - IPHONE_SIDEWAYS.right;
     if (r.brand < L) bad.push(`${route}: «Где жить» starts under the notch (x=${Math.round(r.brand)})`);
     if (r.tools > R) bad.push(`${route}: the header buttons end under the rounded corner (x=${Math.round(r.tools)})`);
-    if (r.search != null && r.search < L) bad.push(`${route}: the search box starts under the notch (x=${Math.round(r.search)})`);
-    if (r.h1 != null && r.h1 < L) bad.push(`${route}: the page title starts under the notch (x=${Math.round(r.h1)})`);
+    for (const [k, what] of [["settings", "the settings button"], ["search", "the search box"], ["layers", "«Слои»"], ["h1", "the page title"]]) {
+      if (!r[k]) continue;
+      if (r[k][0] < L) bad.push(`${route}: ${what} starts under the notch (x=${Math.round(r[k][0])})`);
+      if (r[k][1] > R) bad.push(`${route}: ${what} ends under the rounded corner (x=${Math.round(r[k][1])})`);
+    }
   }
   assert.deepEqual(bad, [], "use env(safe-area-inset-left/right) for side padding");
 });

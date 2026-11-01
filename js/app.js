@@ -6,7 +6,7 @@ import { GitHubStore } from "./store.js";
 import { MapView } from "./map.js";
 import { search, reverse } from "./geo.js";
 import { Similar, kgName } from "./similar.js";
-import { $, esc, local, toast, scoreHex, inkOn, pal, refreshPalette, uid, plural, todayISO, reducedMotion } from "./util.js";
+import { $, esc, local, toast, scoreHex, inkOn, pal, refreshPalette, uid, plural, todayISO, reducedMotion, sideSheet } from "./util.js";
 import { World, CITY_INDICATORS, MONTHS, fmtValue, toScore, CIVIDIS, haversine } from "./world.js";
 import { rankHTML, heatHTML, flagsHTML, radarSVG, radarLegend, radarTable, tripsHTML, subtableHTML, placesListHTML, placeHref, placeScore, yearsLine, hasResidents, hiddenWho, hiddenNote, SHORT } from "./views.js";
 
@@ -93,16 +93,21 @@ const whenRu = iso => {
 const dayRu = iso => { const d = new Date(String(iso).length === 10 ? iso + "T12:00:00" : iso); return isNaN(d) ? String(iso) : d.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }); };
 const popRu = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")} млн жителей` : `${Math.round(n / 1000).toLocaleString("ru-RU")} тыс. жителей`);
 const onDevice = () => (isPhone() ? "на телефоне" : "на этом устройстве");
-const failWhy = err => err.code === "forbidden" ? "у ключа нет прав на запись — замените ключ в настройках" : err.code === "storage" ? "нет связи, а память браузера переполнена" : String(err.message || "неизвестная ошибка").replace(/\.$/, "");
+const noDash = s => String(s).replace(/\s+—\s+/, " ");
+const failWhy = err => err.code === "forbidden" ? "у ключа нет прав на запись — замените ключ в настройках" : err.code === "storage" ? "нет связи, а память браузера переполнена" : err.code === "limit" ? noDash(err.message || "GitHub временно ограничил запросы").replace(/\.$/, "") : String(err.message || "неизвестная ошибка").replace(/\.$/, "");
 const failWhen = err => err.code === "limit" ? "после этого времени" : err.code === "forbidden" ? "с новым ключом" : err.code === "rejected" ? "позже; если GitHub откажет снова, причину нужно исправить в хранилище на GitHub — или попросите Claude" : "через минуту";
 
 const W = () => normalize(state.schema.groups, state.weights);
 const hiddenPairs = M => M.places.reduce((n, p) => n + hiddenWho(M, p.id).length, 0);
 const ratingCount = M => M.ratings.length + hiddenPairs(M);
 const textLine = v => String(v).split("\n").map(x => x.trim()).filter(Boolean).join(" / ");
-const ghDown = () => state.data.status === "error" && state.data.errorCode === "limit" ? `${String(state.data.error || "GitHub временно ограничил запросы").replace(/\.$/, "")}` : state.data.stuck ? "GitHub давно не принимает правки" : "GitHub сейчас не отвечает";
+const limitedNow = () => state.data.status === "error" && state.data.errorCode === "limit";
+const ghDown = () => limitedNow() ? noDash(state.data.error || "GitHub временно ограничил запросы").replace(/\.$/, "") : state.data.stuck ? "GitHub давно не принимает правки" : "GitHub сейчас не отвечает";
 const hhmmOf = t => new Date(t).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-const waitMsg = (what, done) => { const d = state.data, kept = `${what} ${done} ${onDevice()}`, send = /ы$/.test(done) ? "отправятся" : "отправится"; if (d.status === "auth" && d.errorCode === "access") return `Хранилище данных недоступно: ${kept} и ${send}, когда доступ вернётся`; if (d.status === "auth") return `Ключ не подходит: ${kept} и ${send}, когда вы замените ключ в настройках`; if (d.status === "error") return `${ghDown()} — ${kept}, отправлю сам${d.errorCode === "limit" ? " после этого времени" : ", когда GitHub ответит"}`; return `Нет связи: ${kept} и ${send}, когда появится связь`; };
+const whenSend = () => !limitedNow() ? ", когда GitHub ответит" : / до \d/.test(ghDown()) ? " после этого времени" : ", когда GitHub снимет ограничение";
+const countEdits = n => `${n} ${plural(n, "правка", "правки", "правок")}`;
+const stillSending = n => plural(n, "она сохранена здесь, и я продолжаю отправлять её сам", "они сохранены здесь, и я продолжаю отправлять их сам", "они сохранены здесь, и я продолжаю отправлять их сам");
+const waitMsg = (what, done) => { const d = state.data, kept = `${what} ${done} ${onDevice()}`, send = /ы$/.test(done) ? "отправятся" : "отправится"; if (d.status === "auth" && d.errorCode === "access") return `Хранилище данных недоступно: ${kept} и ${send}, когда доступ вернётся`; if (d.status === "auth") return `Ключ не подходит: ${kept} и ${send}, когда вы замените ключ в настройках`; if (d.status === "error") return `${ghDown()} — ${kept}, отправлю сам${whenSend()}`; return `Нет связи: ${kept} и ${send}, когда появится связь`; };
 
 /* ---------- sync status ---------- */
 function renderSync() {
@@ -119,7 +124,7 @@ function renderSync() {
     pending: `В очереди: ${n}`,
     offline: n ? `Нет связи · в очереди: ${n}` : d.loadedAt ? "Нет связи" : "Нет связи · данных нет",
     auth: d.errorCode === "access" ? "Нет доступа к данным" : d.errorCode === "forbidden" ? "Нет прав на запись" : "Ключ не подходит",
-    error: n ? `${d.errorCode === "limit" ? "Лимит GitHub · ждут" : d.stuck ? "Давно ждут GitHub" : "Ждут GitHub"}: ${n}` : "Ошибка связи",
+    error: n ? `${d.errorCode === "limit" ? "Лимит GitHub · ждут" : d.stuck ? "Давно ждут GitHub" : "Ждут GitHub"}: ${n}` : d.errorCode === "limit" ? `Лимит GitHub${d.limitAt ? " до " + hhmmOf(d.limitAt) : ""}` : "GitHub не отвечает",
   };
   t.textContent = map[d.status] || d.status;
   const live = $("syncLive");
@@ -145,6 +150,7 @@ let histSeq = 0;
 const TITLES = { rank: "Рейтинг", places: "Места", rate: "Оценить", settings: "Настройки" };
 
 function route(top) {
+  disarmUpdate();
   if (state.histId) scrolls[state.histId] = scrollY;
   const known = !!(history.state && history.state.wtl);
   if (!known) history.replaceState({ wtl: Date.now().toString(36) + "-" + histSeq++ }, "");
@@ -207,28 +213,28 @@ function brokenNote(bad) {
 }
 
 function bannerHTML() {
-  const d = state.data;
-  if (!d.hasToken) return `<div class="banner"><b>Данные не подключены.</b> Карта и мировые данные работают, а чтобы видеть и сохранять наши оценки, вставьте ключ доступа в <a href="#/settings">настройках</a>.</div>`;
+  const d = state.data, inSettings = state.route.name === "settings" ? "ниже" : `в <a href="#/settings">настройках</a>`;
+  if (!d.hasToken) return `<div class="banner"><b>Данные не подключены.</b> Карта и мировые данные работают, а чтобы видеть и сохранять наши оценки, вставьте ключ доступа ${inSettings}.</div>`;
   const n = d.queued, lost = d.lost, blocked = ["offline", "auth"].includes(d.status) || (d.status === "error" && !d.loadedAt);
-  const queue = tail => (n ? ` В очереди ${onDevice()}: ${n} — не потеряются и ${tail}.` : "");
+  const queue = (one, many) => (n ? ` В очереди ${onDevice()}: ${countEdits(n)} — ${plural(n, `не потеряется и ${one}`, `не потеряются и ${many}`, `не потеряются и ${many}`)}.` : "");
   let html = "";
-  if (d.status === "auth" && d.errorCode === "access") html += `<div class="banner err"><b>Хранилище ${esc(d.repo)} не найдено.</b> Его переименовали или удалили, либо у ключа нет к нему доступа. Проверьте название и ключ в <a href="#/settings">настройках</a>.${queue("отправятся, когда доступ вернётся")}</div>`;
-  else if (d.status === "auth" && d.errorCode === "forbidden") html += `<div class="banner err"><b>У ключа нет прав на запись.</b> Читать данные можно, а сохранять — нет. Замените ключ в <a href="#/settings">настройках</a>: нужен доступ на чтение и запись.${queue("отправятся с новым ключом")}</div>`;
-  else if (d.status === "auth") html += `<div class="banner err"><b>Ключ доступа не подходит.</b> ${d.error && !/не подходит/.test(d.error) ? esc(d.error) + ". " : ""}Проверьте его в <a href="#/settings">настройках</a>.${queue("отправятся, когда ключ заработает")}</div>`;
-  else if (d.status === "offline") html += `<div class="banner"><b>Нет связи.</b> ${d.loadedAt ? `Показаны данные на ${whenRu(d.loadedAt)}. ` : ""}Оценки и правки можно сохранять — они отправятся, когда появится связь.${queue("отправятся сами")}</div>`;
-  else if (d.status === "error" && d.error && n && d.stuck) html += `<div class="banner err"><b>${esc(ghDown())}.</b> Первая неудачная попытка — ${esc(whenRu(new Date(d.failSince).toISOString()))}. ${d.loadedAt ? "Показаны последние загруженные данные. " : ""}Ждут ${onDevice()}: ${n} ${plural(n, "правка", "правки", "правок")} — они сохранены здесь, и я продолжаю отправлять их сам. На всякий случай скачайте копию в <a href="#/settings">настройках</a> («Скачать копию данных»).</div>`;
-  else if (d.status === "error" && d.error && n) html += `<div class="banner err"><b>${esc(ghDown())}.</b> ${d.loadedAt ? "Показаны последние загруженные данные. " : ""}Ждут ${onDevice()}: ${n} ${plural(n, "правка", "правки", "правок")} — отправлю сам, ${d.errorCode === "limit" ? "после этого времени" : "как только GitHub ответит"}.</div>`;
-  else if (d.status === "error" && d.error) html += `<div class="banner err"><b>${esc(d.error.replace(/\.$/, ""))}.</b> ${d.loadedAt ? "Показаны последние загруженные данные. " : ""}${d.errorCode === "limit" ? "Попробую снова сам после этого времени." : "Нажмите на статус вверху, чтобы попробовать ещё раз, или подождите — проверю сам через минуту."}</div>`;
+  if (d.status === "auth" && d.errorCode === "access") html += `<div class="banner err"><b>Хранилище ${esc(d.repo)} не найдено.</b> Его переименовали или удалили, либо у ключа нет к нему доступа. Проверьте название и ключ ${inSettings}.${queue("отправится, когда доступ вернётся", "отправятся, когда доступ вернётся")}</div>`;
+  else if (d.status === "auth" && d.errorCode === "forbidden") html += `<div class="banner err"><b>У ключа нет прав на запись.</b> Читать данные можно, а сохранять — нет. Замените ключ ${inSettings}: нужен доступ на чтение и запись.${queue("отправится с новым ключом", "отправятся с новым ключом")}</div>`;
+  else if (d.status === "auth") html += `<div class="banner err"><b>Ключ доступа не подходит.</b> ${d.error && !/не подходит/.test(d.error) ? esc(d.error) + ". " : ""}Проверьте его ${inSettings}.${queue("отправится, когда ключ заработает", "отправятся, когда ключ заработает")}</div>`;
+  else if (d.status === "offline") html += `<div class="banner"><b>Нет связи.</b> ${d.loadedAt ? `Показаны данные на ${whenRu(d.loadedAt)}. ` : `${isPhone() ? "На телефоне" : "На этом устройстве"} ещё нет наших мест и оценок — загружу их, когда появится связь. `}${n ? `В очереди ${onDevice()}: ${countEdits(n)} — отправлю сам, когда появится связь.` : d.loadedAt ? "Оценки и правки можно сохранять — отправлю сам, когда появится связь." : ""}</div>`;
+  else if (d.status === "error" && d.error && n && d.stuck) html += `<div class="banner err"><b>${esc(ghDown())}.</b> Первая неудачная попытка — ${esc(whenRu(new Date(d.failSince).toISOString()))}. ${d.loadedAt ? "Показаны последние загруженные данные. " : ""}В очереди ${onDevice()}: ${countEdits(n)} — ${stillSending(n)}. На всякий случай скачайте копию ${inSettings} («Скачать копию данных»).</div>`;
+  else if (d.status === "error" && d.error && n) html += `<div class="banner err"><b>${esc(ghDown())}.</b> ${d.loadedAt ? "Показаны последние загруженные данные. " : ""}В очереди ${onDevice()}: ${countEdits(n)} — отправлю сам${esc(whenSend())}.</div>`;
+  else if (d.status === "error" && d.error) html += `<div class="banner err"><b>${esc((d.errorCode === "limit" ? ghDown() : d.error).replace(/\.$/, ""))}.</b> ${d.loadedAt ? "Показаны последние загруженные данные. " : ""}${d.errorCode === "limit" ? `Обновлю данные сам${esc(whenSend())}.` : "Нажмите на статус вверху, чтобы попробовать ещё раз, или подождите — проверю сам через минуту."}</div>`;
   if ((d.broken || []).length) html += `<div class="banner">${brokenNote(d.broken)}</div>`;
   const cut = cutNote();
   if (cut) html += `<div class="banner err">${cut}</div>`;
-  if (!me()) html += `<div class="banner">Кто вы на этом устройстве? <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[0])}">${esc(state.schema.people[0])}</button> <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[1])}">${esc(state.schema.people[1])}</button><br><span class="small muted">От этого зависит, чьи оценки скрыты, пока вы не оценили место сами.</span></div>`;
+  if (!me()) html += `<div class="banner">Кто вы на этом устройстве? <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[0])}">${esc(state.schema.people[0])}</button> <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[1])}">${esc(state.schema.people[1])}</button><br><span class="small muted">${hiddenPairs(state.M) ? "Пока это не выбрано, оценки мест, которые оценил только один из нас, скрыты." : "От этого зависит, чьи оценки скрыты, пока вы не оценили место сами."}</span></div>`;
   const row = (l, i, apply) => `<div class="lost"><span id="lost-${i}">${esc(lostLabel(l))}</span><button type="button" class="btn ghost small" data-lostapply="${i}" aria-describedby="lost-${i}"${blocked ? " disabled" : ""}>${apply}</button><button type="button" class="btn ghost small" data-lostdrop="${i}" aria-describedby="lost-${i}"${blocked ? " disabled" : ""}>Выбросить</button></div>`;
   const wait = blocked ? `<p class="small">Кнопки заработают, когда появится связь.</p>` : "";
   const refused = lost.map((l, i) => [l, i]).filter(([l]) => l.why === "rejected"), clashed = lost.map((l, i) => [l, i]).filter(([l]) => l.why !== "rejected");
   if (refused.length) {
     const why = [...new Set(refused.map(([l]) => String(l.reason || "").replace(/^GitHub не принял правку:?\s*/, "")).filter(Boolean))].join("; ");
-    html += `<div class="banner err"><b>GitHub не принял ${refused.length > 1 ? "правки" : "правку"}${why ? ": " + esc(why) : ""}.</b> ${refused.length > 1 ? "Они сохранены" : "Она сохранена"} ${onDevice()}, копия — в <a href="#/settings">настройках</a> («Скачать копию данных»). «Отправить снова» — попробовать ещё раз, «Выбросить» — правка пропадёт. Если GitHub откажет снова, причину нужно исправить в хранилище на GitHub — или попросите Claude.${refused.map(([l, i]) => row(l, i, "Отправить снова")).join("")}${wait}</div>`;
+    html += `<div class="banner err"><b>GitHub не принял ${refused.length > 1 ? "правки" : "правку"}${why ? ": " + esc(why) : ""}.</b> ${refused.length > 1 ? "Они сохранены" : "Она сохранена"} ${onDevice()}, копия — ${inSettings} («Скачать копию данных»). «Отправить снова» — попробовать ещё раз, «Выбросить» — правка пропадёт. Если GitHub откажет снова, причину нужно исправить в хранилище на GitHub — или попросите Claude.${refused.map(([l, i]) => row(l, i, "Отправить снова")).join("")}${wait}</div>`;
   }
   if (clashed.length) html += `<div class="banner err"><b>Не отправлено: это же изменили на другом устройстве.</b> «Записать мою» — ваша версия заменит ту. «Выбросить» — останется версия с другого устройства, ваша пропадёт.${clashed.map(([l, i]) => row(l, i, "Записать мою")).join("")}${wait}</div>`;
   else if (d.notice && !refused.length) html += `<div class="banner err">${esc(d.notice)} <button type="button" class="linkbtn" data-dismiss-notice>Понятно</button></div>`;
@@ -236,13 +242,17 @@ function bannerHTML() {
 }
 
 function cutNote() {
-  const cut = state.interrupted;
+  const cut = state.interrupted, d = state.data;
   if (!cut) return "";
-  const r = state.data.view().ratings.find(x => x.id === cut.id);
+  const r = d.view().ratings.find(x => x.id === cut.id);
   if (r && (!cut.stamp || String(r.updatedAt || "") >= cut.stamp)) { state.interrupted = null; return ""; }
+  if (!d.fresh && ["idle", "sync"].includes(d.status)) return "";
   if (state.route.name === "rate") return "";
-  const name = esc((state.M.PLACE[cut.place] || {}).name || "место");
-  return `<b>${cut.edit ? `Правка оценки «${name}»` : `Оценка «${name}»`} не успела сохраниться</b> — приложение закрылось раньше. Ответы остались в черновике: <a href="${cut.edit ? `#/rate/${encodeURIComponent(cut.id)}` : `#/rate/new/${encodeURIComponent(cut.place)}`}">открыть и сохранить</a>.`;
+  const name = esc((state.M.PLACE[cut.place] || {}).name || "место"), what = cut.edit ? `Правка оценки «${name}»` : `Оценка «${name}»`;
+  const href = cut.edit ? `#/rate/${encodeURIComponent(cut.id)}` : `#/rate/new/${encodeURIComponent(cut.place)}`;
+  const later = ["offline", "pending"].includes(d.status) ? "когда появится связь" : d.status === "auth" ? "когда заработает ключ" : limitedNow() ? "когда GitHub снимет ограничение" : "когда GitHub ответит";
+  if (!d.fresh) return `<b>${what}: не знаю, дошла ли до GitHub</b> — приложение закрылось во время сохранения, проверю, ${later}. Ответы остались в черновике: <a href="${href}">открыть</a>.`;
+  return `<b>${what} не успела сохраниться</b> — приложение закрылось раньше. Ответы остались в черновике: <a href="${href}">открыть и сохранить</a>.`;
 }
 
 function lostLabel(l) {
@@ -270,6 +280,13 @@ function lostLabel(l) {
 }
 
 /* ---------- rank ---------- */
+function weightsHelp(M, names, own) {
+  const what = { "Поровну": "все группы одинаково", "Оба": "среднее наших сохранённых весов", "Своё": "ползунки ниже" };
+  const missing = M.PEOPLE.filter(w => !own.includes(w));
+  const later = missing.length === 1 ? ` «${missing[0]}» и «Оба» появятся, когда ${missing[0]} сохранит свои веса.` : missing.length ? " Кнопки с нашими именами и «Оба» появятся, когда каждый сохранит свои веса." : "";
+  return `Чьи веса учитывать: ${names.map(n => `«${n}» — ${what[n] || "веса " + gen(n)}`).join(", ")}.${later}`;
+}
+
 function shares(n) {
   const keys = Object.keys(n), floor = Object.fromEntries(keys.map(k => [k, Math.floor(n[k])]));
   let left = 100 - keys.reduce((a, k) => a + floor[k], 0);
@@ -301,8 +318,8 @@ function renderRank(moves = {}) {
       <div class="panel">
         <details class="weights" id="wdetails"${local.get("wopen", false) ? " open" : ""}>
           <summary id="wsum">Веса групп: «${esc(cur)}»${!own.length ? " · своих весов ещё никто не сохранил" : ""}</summary>
-          <p class="small muted">Кнопки над списком — чьи веса групп учитывать. «Поровну» — все группы весят одинаково. ${M.PEOPLE.map(w => `«${esc(w)}» — сохранённые веса ${esc(gen(w))}`).join(", ")}. «Оба» — среднее наших сохранённых весов. «Своё» — ползунки, которые вы двигаете сами.</p>
-          <p class="small muted">Раздайте 100 очков между группами: чем важнее для вас разница между местами в группе, тем больше очков. Двигаете одну — остальные подстраиваются, сумма остаётся 100.</p>
+          <p class="small muted">${esc(weightsHelp(M, names, own))}</p>
+          <p class="small muted">Раздайте 100 очков: важнее группа — больше очков, остальные подстроятся сами.</p>
           <div class="wgrid" id="wgrid">${M.GROUPS.map(g => `<label class="wrow" for="w-${g.key}"><span>${esc(g.name)}</span><span class="num muted" aria-hidden="true">${sh[g.key]}</span><input type="range" id="w-${g.key}" data-g="${g.key}" min="0" max="100" step="1" value="${sh[g.key]}" aria-label="${esc(g.name)}" aria-valuetext="${sh[g.key]} из 100"></label>`).join("")}</div>
           ${canWrite() ? (who ? `<div class="wsave"><button type="button" class="btn ghost small" id="wsaveBtn"${cur === who ? " disabled" : ""}>${esc(saveLabel(cur, who))}</button></div>` : `<p class="small muted">Чтобы сохранить веса как свои, выберите в <a href="#/settings">настройках</a>, кто вы.</p>`) : ""}
         </details>
@@ -315,14 +332,14 @@ function renderRank(moves = {}) {
         <li>«Заполнено» — доля групп, по которым есть оценки или данные (показываем, если меньше 70%).</li>
         <li>«Год здесь» — «прожили бы здесь год?», 0–10.</li>
         <li>В основной список место попадает, когда отвечено хотя бы на половину главных вопросов ★.</li>
-        <li>Оценка партнёра скрыта, пока вы не оцените место сами; открыть её можно в досье кнопкой «Показать всё равно».</li>
+        <li>${who ? "Оценка партнёра скрыта, пока вы не оцените место сами; открыть её можно в досье кнопкой «Показать всё равно»." : "Пока не выбрано, кто вы на этом устройстве, оценки мест, которые оценил только один из нас, скрыты."}</li>
         <li>«Отсев» — места, от которых отказались или где у кого-то вето: в рейтинг не входят.</li>
         <li>«Из ${TRIPS_BUDGET}» — сколько поездок-разведок мы запланировали всего.</li>
       </ul></details>
     </section>
     <section class="block">
       <div class="sec-head"><h2>Места × группы</h2><div class="scale-key"><span>хуже СПб</span><i style="background: var(--neg)"></i><i style="background: color-mix(in oklab, var(--neg) 45%, var(--mid))"></i><i style="background: var(--mid)"></i><i style="background: color-mix(in oklab, var(--pos) 45%, var(--mid))"></i><i style="background: var(--pos)"></i><span>лучше</span></div></div>
-      ${M.places.length ? `<p class="small muted">Клетка — оценка группы 1–5, 3 — как в СПб; «—» — нет оценок и данных. Серая подпись — почему итог по мировым данным: оценок нет или они скрыты, пока вы не оцените место.</p>` : ""}
+      ${M.places.length ? `<p class="small muted">Клетка — оценка группы 1–5, 3 — как в СПб; «—» — нет оценок и данных. Серая подпись — почему итог по мировым данным: оценок нет или они скрыты, ${who ? "пока вы не оцените место" : "пока не выбрано, кто вы на этом устройстве"}.</p>` : ""}
       <div class="panel scroll">${M.places.length ? `<table class="heat" id="heat">${heatHTML(M, norm)}</table>` : `<p class="pad small muted">${!d.hasToken ? `Сравнивать пока нечего: места появятся после подключения данных в <a href="#/settings">настройках</a>.` : waiting ? esc(emptyNote()) : `Сравнивать пока нечего: добавьте место через поиск на <a href="#/map">карте</a>.`}</p>`}</div>
     </section>
     <section class="block">
@@ -420,10 +437,11 @@ function renderPlaces() {
   const el = $("v-places");
   const preset = presetNames(state.M).includes(state.preset) ? state.preset : "Поровну";
   const what = { "Поровну": "все группы весят одинаково", "Оба": "среднее наших весов", "Своё": "ваши ползунки" }[preset] || `сохранённые веса ${gen(preset)}`;
-  el.innerHTML = `<header class="stack" style="gap:8px"><h1>Места</h1><p class="small muted">Где были и куда смотрим. Число справа — итог из 5 по весам «${esc(preset)}» (${esc(what)}; веса меняются в «Рейтинге»); 3 — как в СПб. Новое место — через поиск на <a href="#/map">карте</a>.</p><p class="small muted">Статусы: кандидат — смотрим и ездим на разведку, финалист — главный претендент, отсев — отказались, вето — кто-то из нас против; такие места не в рейтинге.</p></header>
+  el.innerHTML = `<header class="stack" style="gap:8px"><h1>Места</h1><p class="small muted">Где были и куда смотрим. Число справа — итог из 5 по весам «${esc(preset)}» (${esc(what)}; веса меняются в «Рейтинге»); 3 — как в СПб. Новое место — через поиск на <a href="#/map">карте</a>.</p></header>
     ${state.data.hasToken ? bannerHTML() : ""}
     ${state.M.places.length ? `<input type="search" id="placeFilter" placeholder="Фильтр по названию или стране" value="${esc(state.placeFilter)}" aria-label="Фильтр мест" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">` : ""}
-    <div class="panel plist" id="plist">${placesListHTML(state.M, W(), state.placeFilter, emptyNote())}</div>`;
+    <div class="panel plist" id="plist">${placesListHTML(state.M, W(), state.placeFilter, emptyNote())}</div>
+    ${state.M.places.length ? `<p class="small muted">Статусы: кандидат — смотрим и ездим на разведку, финалист — главный претендент, отсев — отказались, вето — кто-то из нас против; такие места не в рейтинге.</p>` : ""}`;
   $("placeFilter")?.addEventListener("input", e => { state.placeFilter = e.target.value; $("plist").innerHTML = placesListHTML(state.M, W(), state.placeFilter, emptyNote()); });
   $("placeFilter")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
 }
@@ -525,7 +543,7 @@ function renderPlace(id) {
   const el = $("v-place");
   if (!p) {
     const d = state.data;
-    const why = !d.hasToken ? "Место откроется после подключения данных." : d.loadedAt ? `Место не найдено. <a href="#/places">Все места</a>` : d.status === "sync" || d.status === "idle" ? "Загружаю данные…" : "Место откроется, когда загрузятся данные: сейчас нет связи или ключ не подходит.";
+    const why = !d.hasToken ? "Место откроется после подключения данных." : d.loadedAt ? `Место не найдено. <a href="#/places">Все места</a>` : d.status === "sync" || d.status === "idle" ? "Загружаю данные…" : d.status === "offline" ? "Место откроется, когда появится связь и загрузятся данные." : d.status === "auth" ? "Место откроется, когда заработает ключ и загрузятся данные." : "Место откроется, когда GitHub ответит и загрузятся данные.";
     el.innerHTML = `<h1>${d.hasToken && d.loadedAt ? "Место не найдено" : d.hasToken && ["sync", "idle"].includes(d.status) ? "Загружаю место…" : "Место пока не открыть"}</h1>${bannerHTML()}<div class="banner">${why}</div>`;
     return;
   }
@@ -581,7 +599,7 @@ function renderPlace(id) {
     <section class="block">
       <div class="sec-head"><h2>Подкатегории</h2><label class="toggle"><input type="checkbox" id="showEmpty"${state.showEmpty ? " checked" : ""}> Показать пустые</label></div>
       <div class="panel scroll"><table class="subtable">${subtableHTML(M, p, state.showEmpty, typed)}</table></div>
-      <p class="small muted">«Итог» — наши оценки вместе с данными. «Данные» — мировые данные и цифры места. Буква у оценки — откуда знаем: A — в быту, C — со слов живущих, D — по сайтам; «ц» — посчитано из «Цифр места».</p>${hidW.length ? `<p class="small muted">${hidW.map(w => `«·» в столбце «${esc(w)}»`).join(", ")} — оценка скрыта, пока вы не оцените место сами.</p>` : ""}
+      <p class="small muted">«Итог» — наши оценки вместе с данными. «Данные» — мировые данные и цифры места. Буква у оценки — откуда знаем: A — в быту, C — со слов живущих, D — по сайтам; «ц» — посчитано из «Цифр места».</p>${hidW.length ? `<p class="small muted">${hidW.map(w => `«·» в столбце «${esc(w)}»`).join(", ")} — оценка скрыта, ${me() ? "пока вы не оцените место сами" : "пока не выбрано, кто вы на этом устройстве"}.</p>` : ""}
     </section>
     <section class="block">
       <div class="sec-head"><h2>Мировые данные</h2><span class="small muted">${city && !city.synthetic ? (p.lat != null && haversine(p, city) >= 5 ? `климат по городу ${esc(city.n)}, ${Math.round(haversine(p, city))} км` : "климат: " + esc(city.n)) + " · " + esc(kgName(city.kg)) : ""}</span></div>
@@ -722,7 +740,7 @@ function factsHTML(p) {
     return `<div class="fact">
       <label class="field"><span class="lbl">${esc(f.name)}, ${esc(f.unit)}${sc != null ? ` <span class="badge" title="Оценка ${fmt(sc)} из 5 для итога, 3 — как в СПб" aria-label="оценка ${fmt(sc)} из 5" style="background:${scoreHex(sc)};color:${inkOn(scoreHex(sc))}">${fmt(sc)}</span>` : ""}</span>
         <input type="text" inputmode="decimal" name="fact_${f.key}" value="${cur ? esc(String(cur.v)) : ""}" placeholder="${base && f.ref ? "по умолчанию " + f.ref : ""}"${dis}></label>
-      <label class="field src"><span class="lbl">Откуда</span><input type="text" name="src_${f.key}" value="${cur ? esc(cur.src || "") : ""}" placeholder="сайт, число объявлений" aria-label="${esc(f.name)}: откуда цифра"${dis}></label>
+      <label class="field src"><span class="lbl">Откуда</span><input type="text" name="src_${f.key}" value="${cur ? esc(cur.src || "") : ""}" placeholder="${esc(SRC_HINT[f.key] || "где узнали")}" aria-label="${esc(f.name)}: откуда цифра"${dis}></label>
       <span class="small muted">${hintHTML(f.hint)}${!base && f.rule === "money" ? ref ? ` СПб: ${ref}\u00a0€.` : ` Оценки нет, пока не вписан чек СПб: ${spb ? `<a href="${placeHref(spb.id)}">досье СПб</a>` : "досье СПб"}, «Цифры».` : ""}${cur && cur.at ? ` Вписано ${esc(dayRu(cur.at).replace(/\.$/, ""))}.` : ""}</span>${hintList(f.hint) ? `<details class="inline small muted"><summary>Список</summary>${esc(hintList(f.hint)[2])}.</details>` : ""}
     </div>`;
   }).join("");
@@ -758,11 +776,13 @@ async function fillSimilar(p) {
 function draftNote(p) {
   if (state.M.isBase(p)) return "";
   const f = state.form ? state.form.form : local.get("draft", {}), all = [f].concat(Object.values(state.form ? state.form.drafts : local.get("drafts", {})));
-  const d = all.find(x => x && !x.id && x.place === p.id && (!me() || x.who === me()) && x.scores && Object.keys(x.scores).length);
+  const d = all.find(x => x && !x.id && x.place === p.id && (!me() || (x.by || x.who) === me()) && x.scores && Object.keys(x.scores).length);
   if (!d) return "";
-  const n = Object.keys(d.scores).length;
-  return `<p class="banner small">Есть несохранённый черновик вашей оценки: ${n} ${plural(n, "ответ", "ответа", "ответов")}. <a href="#/rate/new/${encodeURIComponent(p.id)}">Продолжить</a></p>`;
+  const n = Object.keys(d.scores).length, whose = d.who && d.who !== me() ? `оценки ${esc(gen(d.who))}` : "вашей оценки";
+  return `<p class="banner small">Есть несохранённый черновик ${whose}: ${n} ${plural(n, "ответ", "ответа", "ответов")}. <a href="#/rate/new/${encodeURIComponent(p.id)}">Продолжить</a></p>`;
 }
+
+const SRC_HINT = { rent: "сайт, число объявлений", dinner: "сколько ужинов и где", basket: "магазин", utilities: "хозяин или агент", tds: "замер TDS-метром" };
 
 /* ---------- rate ---------- */
 function outcome(M, placeId, doc, partner, blind) {
@@ -792,6 +812,7 @@ function renderRate(arg) {
       },
       failed: () => { if (state.route.name !== "rate") toast("Оценка не сохранена — ответы остались во вкладке «Оценить»"); },
       placeQuestions: id => (state.M.PLACE[id] || {}).questions || "",
+      placeStars: (id, except) => { const M = state.M; return M.ratingsOf(id).filter(r => r.id !== except).flatMap(r => M.STAR_KEYS.filter(k => r.scores && r.scores[k] != null)); },
       isDeleted: rid => { const r = state.data.docOf(`ratings/${rid}.json`); return !r || !!r.deleted; },
       emptyNote,
       remove: (rid, oid) => {
@@ -842,7 +863,7 @@ function setMe(who) {
   if ($("sheet").hidden) $("sheetBody").innerHTML = ""; else refreshSheet();
 }
 const hidLine = (M, id, hid) => !hid.length ? "" : `<p class="small muted">${hid.length > 1 ? "Оценки" : "Оценка"} ${esc(hid.map(gen).join(" и "))} ${hid.length > 1 ? "скрыты" : "скрыта"}, ${me() ? `пока вы не оцените место сами. <button type="button" class="linkbtn" data-reveal="${esc(id)}">Показать всё равно</button>` : `пока не выбрано, кто вы на этом устройстве: ${M.PEOPLE.map(w => `<button type="button" class="linkbtn" data-setme="${esc(w)}">${esc(w)}</button>`).join(" или ")}`}</p>`;
-const hiddenRate = r => `Эта оценка ${gen(r.who)} скрыта, пока вы не оцените место сами. Открыть её можно в досье кнопкой «Показать всё равно».`;
+const hiddenRate = r => me() ? `Эта оценка ${gen(r.who)} скрыта, пока вы не оцените место сами. Открыть её можно в досье кнопкой «Показать всё равно».` : `Эта оценка ${gen(r.who)} скрыта, пока не выбрано, кто вы на этом устройстве. Выберите это в досье места или в настройках.`;
 
 function rerender(fn) {
   const view = $(VIEWS[state.route.name]);
@@ -911,7 +932,7 @@ function renderSettings() {
     </section>
     ${installFirst || isStandalone() ? "" : install}
     <section class="block"><h2>Приложение</h2>
-      <div class="panel pad stack"><p class="small">Работает и без интернета: приложение и наши данные хранятся на устройстве. Новые оценки отправятся, когда появится связь. Карта и поиск мест без интернета не работают.</p><p class="small muted">Версия приложения: <span id="appVersion">—</span></p></div>
+      <div class="panel pad stack"><p class="small">Работает и без интернета: приложение и наши данные хранятся на устройстве. Новые оценки отправятся, когда появится связь. Без интернета не работают подложка карты и поиск мест.</p><p class="small muted">Версия приложения: <span id="appVersion">—</span></p></div>
     </section>
     <section class="block"><h2>Копия данных</h2>
       <div class="panel pad stack"><p class="small muted">Все места, оценки и веса одним файлом — на случай, если что-то пойдёт не так. ${hiddenPairs(state.M) ? "В файле есть и скрытые от вас оценки." : ""}</p><div class="btns"><button type="button" class="btn ghost" id="exportBtn">Скачать копию данных</button></div></div>
@@ -1000,7 +1021,7 @@ function renderSettings() {
 
 function statusHTML() {
   const d = state.data, M = state.M;
-  if (d.status !== "live") return d.status === "error" && d.queued ? esc(`${ghDown()}. Ждут ${onDevice()}: ${d.queued} — `) + (d.stuck ? `они сохранены здесь, и я продолжаю отправлять их сам. На всякий случай скачайте копию ниже — «Скачать копию данных».` : esc(`отправлю сам, ${d.errorCode === "limit" ? "после этого времени" : "когда GitHub ответит"}.`)) : esc(d.error || "");
+  if (d.status !== "live") return d.status === "error" && d.queued ? esc(`${ghDown()}. В очереди ${onDevice()}: ${countEdits(d.queued)} — `) + (d.stuck ? esc(`${stillSending(d.queued)}. На всякий случай скачайте копию ниже: «Скачать копию данных».`) : esc(`отправлю сам${whenSend()}.`)) : limitedNow() ? esc(`${ghDown()}. Обновлю данные сам${whenSend()}.`) : esc(d.error || "");
   const n = M.places.filter(p => !M.isBase(p)).length, base = M.places.find(M.isBase);
   return esc(`Подключено: мест ${n}${base ? " и СПб" : ""}, оценок ${ratingCount(M)}.`) + (n ? ` Дальше: <a href="#/rank">рейтинг</a> или <a href="#/map">карта</a>.` : ` Мест пока нет: <a href="#/map">добавьте первое место через поиск на карте</a>.`) + (me() ? "" : " Теперь выберите выше, кто вы на этом устройстве: от этого зависит, чьи оценки скрыты.");
 }
@@ -1291,10 +1312,10 @@ function renderMap() {
     if (state.fitSimilar && state.layers.city === "similar" && col) {
       state.fitSimilar = false;
       if (col.list.length) {
-        const t = similarTarget(), wide = innerWidth >= 860, side = wide && !$("sheet").hidden;
+        const t = similarTarget(), wide = sideSheet(), side = wide && !$("sheet").hidden;
         const pts = col.list.map(c => [c.lat, c.lon]).concat(t && t.x.lat != null ? [[t.x.lat, t.x.lon]] : []);
         mv.map.invalidateSize();
-        mv.map.fitBounds(window.L.latLngBounds(pts), { paddingTopLeft: [side ? 424 : 20, 70], paddingBottomRight: [20, wide ? 40 : 110], maxZoom: 7, animate: false });
+        mv.map.fitBounds(window.L.latLngBounds(pts), { paddingTopLeft: [side ? $("sheet").offsetLeft + $("sheet").offsetWidth + 24 : 20, 70], paddingBottomRight: [20, wide ? 40 : 110], maxZoom: 7, animate: false });
       }
     }
   }
@@ -1304,7 +1325,7 @@ function renderMap() {
   const pts = state.layers.places && state.fitPending && !mv.restoreView() ? state.M.places.filter(p => p.lat != null).map(p => [p.lat, p.lon]) : [];
   if (pts.length > 1) {
     state.fitPending = false;
-    const wide = innerWidth >= 860;
+    const wide = sideSheet();
     mv.map.invalidateSize();
     mv.map.fitBounds(window.L.latLngBounds(pts), { paddingTopLeft: [24, wide ? 70 : 80], paddingBottomRight: [24, wide ? 40 : 110], maxZoom: 6, animate: false });
   }
@@ -1445,7 +1466,7 @@ function openPlace(id, fly) {
   const vetoR = !M.isBase(p) && M.vetoes().find(r => r.place === p.id);
   const pf = !M.isBase(p) && !M.ratingsOf(p.id).length && state.world.cities ? predictor() : null, city = pf && state.world.placeCity(p), pr = pf && pf({ cc: p.cc, city: city && !city.synthetic ? city : null, lat: p.lat, lon: p.lon });
   openSheet(`<h3 id="sheetTitle" aria-level="2" tabindex="-1">${esc(p.name)}</h3>
-    <div class="chips">${p.country ? `<span class="chip">${esc(p.country)}</span>` : ""}<span class="chip">${esc(p.status || "кандидат")}</span>${vetoR ? `<span class="chip warn">вето</span>` : ""}${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">прожили бы год здесь: ${esc(years)}</span>` : ""}${M.isBase(p) ? "" : `<span class="chip">оценок: ${M.ratingsOf(p.id).length + hid.length}</span>`}</div>
+    <div class="chips">${p.country ? `<span class="chip">${esc(p.country)}</span>` : ""}<span class="chip">${esc(p.status || "кандидат")}</span>${vetoR ? `<span class="chip warn">вето</span>` : ""}${years ? `<span class="chip" title="Прожили бы здесь год? 0–10">прожили бы здесь год: ${esc(years)}</span>` : ""}${M.isBase(p) ? "" : `<span class="chip">оценок: ${M.ratingsOf(p.id).length + hid.length}</span>`}</div>
     ${scoreLine(M, p)}
     ${hidLine(M, p.id, hid)}
     <div class="btns"><a class="btn" href="${placeHref(p.id)}">Досье</a>${M.isBase(p) ? "" : `<a class="btn ghost" href="#/rate/new/${encodeURIComponent(p.id)}">Оценить</a>`}<button type="button" class="btn ghost" data-act="simplace" data-id="${esc(p.id)}">Похожие</button></div>
@@ -1574,7 +1595,7 @@ async function onSheetClick(e) {
     showSim(sim, true);
   } else if (act === "simshow" && state.simCandidate) {
     state.layers.simTo = state.simCandidate; state.layers.city = "similar"; state.fitSimilar = true; saveLayers();
-    if (innerWidth < 860) closeSheet();
+    if (!sideSheet()) closeSheet();
     renderMap();
     toast("На карте: похожие города, ярче — похожее");
   }
@@ -1630,8 +1651,9 @@ function initTips() {
     tip.style.left = Math.max(8, x) + "px"; tip.style.top = y + "px";
   };
   const hide = () => { tip.hidden = true; };
-  document.addEventListener("pointermove", e => { if (e.pointerType === "mouse") show(e); else hide(); });
-  document.addEventListener("pointerdown", show);
+  let press = null;
+  document.addEventListener("pointermove", e => { if (e.pointerType === "mouse") show(e); else if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) hide(); });
+  document.addEventListener("pointerdown", e => { press = e.pointerType === "mouse" ? null : { x: e.clientX, y: e.clientY }; show(e); });
   document.addEventListener("pointercancel", hide);
   document.addEventListener("scroll", hide, { capture: true, passive: true });
   addEventListener("hashchange", hide);
@@ -1639,14 +1661,13 @@ function initTips() {
 
 function initKeyboard() {
   const tall = {}, vv = window.visualViewport;
-  const check = () => {
+  const check = e => {
     const w = innerWidth, h = vv ? vv.height : innerHeight, a = document.activeElement;
     tall[w] = Math.max(tall[w] || 0, h);
-    const field = !!a && a.matches("textarea, select, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])");
-    const on = field && h < tall[w] * 0.8, html = document.documentElement;
-    if (on === html.classList.contains("typing")) return;
-    html.classList.toggle("typing", on);
-    if (on) requestAnimationFrame(() => a.scrollIntoView({ block: "center" }));
+    const field = !!a && a.matches("textarea, select, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])") && !a.closest(".map-top");
+    const on = field && h < tall[w] * 0.8, html = document.documentElement, was = html.classList.contains("typing");
+    if (on !== was) html.classList.toggle("typing", on);
+    if (on && (!was || (e && e.type === "focusin"))) requestAnimationFrame(() => { if (document.activeElement === a) a.scrollIntoView({ block: "center" }); });
   };
   addEventListener("resize", check);
   if (vv) vv.addEventListener("resize", check);
@@ -1655,12 +1676,34 @@ function initKeyboard() {
 }
 
 /* ---------- boot ---------- */
+function onSyncTap() {
+  const d = state.data;
+  if (!d.hasToken || d.status === "auth") { go("#/settings"); return; }
+  if (d.limited) { toast(`${d.limitAt ? `GitHub ограничил запросы до ${hhmmOf(d.limitAt)}.` : "GitHub временно ограничил запросы."} ${d.queued ? `В очереди ${onDevice()}: ${countEdits(d.queued)} — отправлю сам${whenSend()}.` : `Обновлю данные сам${whenSend()}.`}`); return; }
+  if (state.route.name === "map" && d.status === "live" && d.lost.length) { go("#/rank"); return; }
+  const h = d.head, was = d.status;
+  d.refresh().then(() => {
+    const M = state.M, now = d.status;
+    if (now === "live" && was === "live") toast(d.head !== h ? `Данные обновлены: мест ${M.places.filter(p => !M.isBase(p)).length}, оценок ${ratingCount(M)}` : "Данные актуальны: нового нет");
+    else if (now === "offline") toast(`${was === "offline" ? "Всё ещё нет связи" : "Нет связи"} — проверю сам, когда она появится.`);
+    else if (now === "error" && d.errorCode !== "limit") toast(`GitHub ${was === "error" ? "всё ещё" : "сейчас"} не отвечает — ${d.queued ? "правки отправлю сам, как только он ответит" : "попробую снова сам через минуту"}.`);
+  });
+}
+
+function disarmUpdate() {
+  const b = $("updateBtn");
+  if (!b || !b.dataset.armed) return;
+  delete b.dataset.armed;
+  b.textContent = "Обновить";
+  $("updateBar").querySelector("span").textContent = "Вышла новая версия приложения. Обновить — займёт секунду, черновики и очередь сохранятся.";
+}
+
 function initUpdates() {
   if (!("serviceWorker" in navigator)) return;
   let prev = navigator.serviceWorker.controller;
   navigator.serviceWorker.register("sw.js").catch(() => {});
   navigator.serviceWorker.addEventListener("controllerchange", () => { const was = prev; prev = navigator.serviceWorker.controller; if (was) $("updateBar").hidden = false; });
-  $("updateLater").addEventListener("click", () => { $("updateBar").hidden = true; });
+  $("updateLater").addEventListener("click", () => { $("updateBar").hidden = true; disarmUpdate(); });
   $("updateBtn").addEventListener("click", () => {
     const b = $("updateBtn");
     if (state.form) state.form.flush();
@@ -1699,7 +1742,7 @@ async function boot() {
     toast("Тема: " + ({ auto: "как в системе", light: "светлая", dark: "тёмная" })[t]);
     if (state.route.name === "settings") rerender(renderSettings);
   });
-  $("syncBtn").addEventListener("click", () => { const d = state.data; if (!d.hasToken || d.status === "auth") go("#/settings"); else if (d.limited) toast(`GitHub ограничил запросы до ${hhmmOf(d.limitUntil)}. ${d.queued ? `Ждут ${onDevice()}: ${d.queued} — отправлю сам после этого времени.` : "Обновлю данные сам после этого времени."}`); else if (state.route.name === "map" && state.data.status === "live" && state.data.lost.length) go("#/rank"); else { const h = state.data.head, was = state.data.status; state.data.refresh().then(() => { const M = state.M; if (state.data.status === "live" && was === "live") toast(state.data.head !== h ? `Данные обновлены: мест ${M.places.filter(p => !M.isBase(p)).length}, оценок ${ratingCount(M)}` : "Данные актуальны: нового нет"); }); } });
+  $("syncBtn").addEventListener("click", onSyncTap);
   document.addEventListener("click", e => {
     if (e.target.closest("[data-dismiss-notice]")) { state.data.notice = ""; state.data.emit(); return; }
     const bk = e.target.closest("[data-back]");

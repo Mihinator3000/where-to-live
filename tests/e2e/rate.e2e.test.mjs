@@ -33,6 +33,12 @@ async function press(sel, settle) {
   return page.tap({ sel }, settle);
 }
 const score = (k, v) => press(`[data-score="${k}"][data-v="${v}"]`);
+// The message for a form with nothing to save names the three ways to fill it: a score, «Прожили бы здесь год?», a review.
+const EMPTY_FORM = /хотя бы одн/;
+async function saysWhatIsMissing() {
+  const m = await page.text("#fMsg");
+  for (const re of [EMPTY_FORM, /оценк/, /«Прожили бы здесь год\?»/, /отзыв/]) assert.match(m, re, `«${m}»`);
+}
 const val = sel => page.eval(`document.querySelector(${JSON.stringify(sel)}).value`);
 const pressed = sel => page.eval(`[...document.querySelectorAll(${JSON.stringify(sel)})].filter(b => b.getAttribute("aria-pressed") === "true").map(b => b.dataset.val || b.dataset.v || b.dataset.who || b.dataset.year || b.dataset.l || b.innerText)`);
 const qval = k => page.eval(`document.querySelector('[data-qval="${k}"]').textContent`);
@@ -111,6 +117,7 @@ test("answering «Кто вы на этом устройстве?» on the rate 
   assert.match(await page.text("#rateBanner"), /Кто вы на этом устройстве/);
   assert.deepEqual(await pressed("[data-who]"), [], "nobody is preselected yet");
   await press('[data-setme="Вика"]');
+  assert.match(await toastText(/Это устройство/), /Вика/, "the answer is confirmed");
   assert.doesNotMatch(await page.text("#rateBanner"), /Кто вы на этом устройстве/);
   assert.deepEqual(await pressed("[data-who]"), ["Вика"], "I just said I am Вика, the form should not ask again");
 });
@@ -245,12 +252,12 @@ test("a group comment opens on demand, takes the typing and is saved trimmed", {
 
 test("the star counter counts main and extra answers separately, and so do the groups", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi" });
-  assert.equal(await page.text("#fCounts"), "главные ★ 0 из 10");
+  assert.equal(await page.text("#fCounts"), "главные ★ 0 из 10 · для рейтинга нужно 5");
   await score("пешком", 4);
   await score("чистота", 3);
   await press("#fShowAll");
   await score("магазины", 4.5);
-  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · ещё 1 · нужно 5");
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · ещё 1 · для рейтинга нужно 5");
   assert.equal(await page.text("#gc-city"), "· 3 из 8");
 });
 
@@ -368,7 +375,7 @@ test("an empty form is not saved and the message says what is missing", { skip }
   await fresh({ hash: "#/rate/new/batumi" });
   await press('[data-opt="season"][data-val="пик"]');
   await press("#fSave");
-  assert.equal(await page.text("#fMsg"), "Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.");
+  await saysWhatIsMissing();
   assert.equal(await page.eval(`document.getElementById("fMsg").classList.contains("err")`), true);
   assert.deepEqual(await mockLog(page), []);
 });
@@ -394,7 +401,7 @@ test("a veto alone is enough to save a rating", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi" });
   await page.fill("#fVeto", "Жара +40 всё лето");
   await press("#fSave");
-  assert.notEqual(await page.text("#fMsg"), "Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.", "«место отпадает совсем» is a complete answer");
+  assert.doesNotMatch(await page.text("#fMsg"), EMPTY_FORM, "«место отпадает совсем» is a complete answer");
   await page.waitFor(`location.hash === "#/place/batumi"`, 5000, "dossier");
   assert.equal((await ratingsOn("batumi"))[0].veto, "Жара +40 всё лето");
 });
@@ -620,10 +627,10 @@ test("two unsaved drafts for the same place can both be reached from the chips",
   await score("улица", 2);
   await score("шум", 2);
   await page.select("#fPlace", "Батуми");
-  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · нужно 5");
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · для рейтинга нужно 5");
   assert.deepEqual(await chips(), ["Батуми (1 ответ)"]);
   await page.tap({ sel: ".draft-chip .linkbtn" });
-  assert.equal(await page.text("#fCounts"), "главные ★ 1 из 10 · нужно 5");
+  assert.equal(await page.text("#fCounts"), "главные ★ 1 из 10 · для рейтинга нужно 5");
   assert.deepEqual(await chips(), ["Батуми (2 ответа)"], "the chip leads to the other draft, not to the one I am in");
 });
 
@@ -720,7 +727,7 @@ test("a clash is explained in plain words, not as a connection error or a file p
   await score("интернет", 2);
   await press("#fSave");
   await page.waitFor(`document.getElementById("fMsg").innerText`, 6000, "clash message");
-  assert.notEqual(await page.text("#syncText"), "Ошибка связи", "the network is fine");
+  assert.notEqual(await page.text("#syncText"), "GitHub не отвечает", "the network is fine");
   const all = (await page.text("#rateBanner")) + "\n" + (await page.text("#fMsg"));
   assert.doesNotMatch(all, /ratings\/|\.json/, "no repo paths in what the user reads");
 });
@@ -809,7 +816,7 @@ test("in dark mode the error under the save button and «Удалить оцен
   await press("#fReset");
   await press("#fReset");
   await press("#fSave");
-  assert.equal(await page.text("#fMsg"), "Поставьте хотя бы одну оценку, ответьте «Прожили бы здесь год?» или напишите отзыв.");
+  await saysWhatIsMissing();
   const msg = await page.eval(CONTRAST("#fMsg"));
   assert.ok(msg >= 4.5, `error text contrast ${msg}:1 is below 4.5:1`);
   assert.ok(del >= 4.5, `«Удалить оценку» contrast ${del}:1 is below 4.5:1`);

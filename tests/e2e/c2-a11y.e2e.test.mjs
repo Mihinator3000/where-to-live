@@ -587,8 +587,8 @@ test("changes of the sync status are announced politely", { skip }, async () => 
   await page.eval(`localStorage.setItem("mock:offline", "1")`);
   await page.eval(`document.querySelector('[data-score="интернет"][data-v="4"]').click()`);
   await page.eval(`document.getElementById("fSave").click()`);
-  await page.waitFor(`/В очереди/.test(document.getElementById("syncText").innerText)`, 6000, "queued status");
-  assert.match(await liveText("#toast"), /В очереди/, "the status in the header changes silently; only sighted users see «В очереди: 1»");
+  await page.waitFor(`/в очереди/i.test(document.getElementById("syncText").innerText)`, 6000, "queued status");
+  assert.match(await liveText("#toast"), /в очереди/i, "the status in the header changes silently; only sighted users see «Нет связи · в очереди: 1»");
 });
 
 test("messages under the rating form and in settings are polite live regions", { skip }, async () => {

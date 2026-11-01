@@ -51,6 +51,8 @@ export function scoreColor(v) {
 }
 
 export const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+export const SIDE_SHEET = "(min-width: 860px), (orientation: landscape) and (max-height: 500px)";
+export const sideSheet = () => matchMedia(SIDE_SHEET).matches;
 
 let palette = null;
 const hex2rgb = h => { const s = h.trim().replace("#", ""); const f = s.length === 3 ? s.split("").map(c => c + c).join("") : s; return [0, 2, 4].map(i => parseInt(f.slice(i, i + 2), 16)); };

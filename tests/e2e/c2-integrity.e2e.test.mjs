@@ -797,7 +797,7 @@ test("a background check in the middle of a slow card save neither warns about a
   await sleep(400);
   await A.eval(`document.dispatchEvent(new Event("visibilitychange"))`);
   await A.waitFor(`document.getElementById("placeMsg") && document.getElementById("placeMsg").innerText`, 10000, "save result");
-  await sleep(1500);
+  await A.idle(400);
   await A.eval(`localStorage.removeItem("mock:delay")`);
   await grab(A);
   assert.doesNotMatch(await A.text("#placeMsg"), /другом устройстве/);
@@ -814,7 +814,7 @@ test("network back and a return to the app at the same moment send the queue onc
   await give(A);
   await A.eval(`localStorage.setItem("mock:delay", "700"); localStorage.removeItem("mock:log"); localStorage.removeItem("mock:offline"); window.dispatchEvent(new Event("online")); document.dispatchEvent(new Event("visibilitychange")); setTimeout(() => document.dispatchEvent(new Event("visibilitychange")), 300)`);
   await A.waitFor(`JSON.parse(localStorage.getItem("wtl:pending") || "[]").length === 0 && ${BOOTED}`, 12000, "queue sent");
-  await sleep(1500);
+  await A.idle(400);
   await A.eval(`localStorage.removeItem("mock:delay")`);
   await grab(A);
   const log = await A.eval(`JSON.parse(localStorage.getItem("mock:log") || "[]")`);

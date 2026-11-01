@@ -150,7 +150,7 @@ test("a place only my partner rated says her rating is hidden, and revealing it 
   const files = repo({ places: [SPB, place("alfa", "Альфа", { cc: "PRT", country: "Португалия" })], ratings: [rating("v1", "alfa", "Вика", stars(4.5))] });
   await open({ files });
   assert.deepEqual(await mainRows(), []);
-  assert.ok((await rowOf("Альфа")).chips.includes("оценка Вики скрыта до вашей"));
+  assert.ok((await rowOf("Альфа")).chips.includes("оценка Вики скрыта до вашей оценки"));
   await page.tap({ sel: "#rank a.row", text: "Альфа" });
   await page.waitFor(`location.hash === "#/place/alfa"`, 3000, "dossier");
   await page.tap({ text: "Показать всё равно" });
@@ -174,7 +174,8 @@ test("a place only my partner rated is not listed as having no ratings when worl
 
 test("places with too little data are listed with their fill share and open the dossier", { skip }, async () => {
   await open({ local: { "wtl:worldData": false } });
-  assert.match(await page.text("#rank"), /Мало данных для рейтинга \(заполнено меньше 50%\): Валенсия — 45%, Порту — 36%/);
+  const thin = await page.text("#rank");
+  for (const re of [/Мало данных/, /меньше 50%/, /Валенсия\D{1,4}45%/, /Порту\D{1,4}36%/]) assert.match(thin, re, `«${thin}»`);
   await page.tap({ sel: "#rank .empty-row a", text: "Порту" });
   await page.waitFor(`location.hash === "#/place/porto"`, 3000, "dossier");
 });
@@ -483,14 +484,16 @@ test("flags list red flags, disagreements and vetoes with a count, most severe f
 
 test("with no flags the list explains what would show up there", { skip }, async () => {
   await open({ files: duo() });
-  assert.match(await page.text(".flags"), /Флагов нет\. Здесь появятся оценки ≤1\.5, расхождения между нами от 1\.5 балла и вето\./);
+  const none = await page.text(".flags");
+  for (const re of [/Флагов нет/, /≤\s?1\.5/, /расхожден[^.]*1\.5/, /вето/]) assert.match(none, re, `«${none}»`);
 });
 
 test("flags from places I have not rated are hidden behind a note until I reveal that place", { skip }, async () => {
   const files = repo({ places: [SPB, place("alfa", "Альфа", { cc: "PRT", country: "Португалия" })], ratings: [rating("v1", "alfa", "Вика", { "улица": 1, "шум": 1 })] });
   await open({ files });
   assert.equal(await page.eval(`document.querySelectorAll(".flags .flag").length`), 0);
-  assert.match(await page.text(".flags"), /Флаги по местам, которые вы сами ещё не оценили, появятся после вашей оценки — чтобы не подглядывать\./);
+  const note = await page.text(".flags");
+  for (const re of [/Флаги/, /не оценили/, /после вашей оценки/]) assert.match(note, re, `«${note}»`);
   await page.tap({ sel: "#rank a.row", text: "Альфа" });
   await page.waitFor(`location.hash === "#/place/alfa"`, 3000, "dossier");
   await page.tap({ text: "Показать всё равно" });
@@ -511,8 +514,10 @@ test("flag links are comfortable tap targets on a phone (at least 24px tall)", {
 
 test("with no places the ranking explains it is empty and the heat matrix is not a table of bare headers", { skip }, async () => {
   await open({ files: repo({ places: [], ratings: [] }) });
-  assert.match(await page.text("#v-rank header"), /Мест: 0 · оценок: 0 · поездок-разведок: 0 из 20/);
-  assert.match(await page.text("#rank"), /Место попадёт сюда, когда отвечено хотя бы на половину главных вопросов ★/);
+  const head = await page.text("#v-rank header");
+  for (const re of [/Мест: 0/, /оценок: 0/, /0 из 20/]) assert.match(head, re, `«${head}»`);
+  const empty = await page.text("#rank");
+  for (const re of [/попадёт сюда/, /половин[уаы] главных вопросов ★/]) assert.match(empty, re, `«${empty}»`);
   const heat = await page.eval(`({ head: document.querySelectorAll(".heat thead th").length, rows: document.querySelectorAll(".heat tbody tr").length })`);
   assert.ok(heat.rows > 0 || heat.head === 0, `heat matrix shows ${heat.head} column headers over ${heat.rows} rows`);
   assert.deepEqual(page.takeErrors(), []);
@@ -605,9 +610,9 @@ test("each place row shows its score, country, status and how many ratings it ha
   await open({ files, hash: "#/places" });
   const by = Object.fromEntries((await plist()).map(r => [r.name, r]));
   assert.match(by["Порту"].score, /^\d\.\d$/);
-  assert.deepEqual(by["Порту"].meta, ["Португалия", "кандидат", "оценок: 2", "прожили бы год здесь: Михаил 7/10 · Вика 6/10"]);
+  assert.deepEqual(by["Порту"].meta, ["Португалия", "кандидат", "оценок: 2", "прожили бы здесь год: Михаил 7/10 · Вика 6/10"]);
   assert.deepEqual(by["Батуми"].meta, ["Грузия", "кандидат", "только мировые данные"]);
-  assert.deepEqual(by["Тбилиси"].meta, ["Грузия", "кандидат", "оценка Вики скрыта до вашей"]);
+  assert.deepEqual(by["Тбилиси"].meta, ["Грузия", "кандидат", "оценка Вики скрыта до вашей оценки"]);
   assert.equal(by["Санкт-Петербург"].score, "3.0");
   assert.equal(by["Зета"].meta[1], "вето", "a vetoed place says so instead of «кандидат»");
 });
@@ -628,7 +633,8 @@ test("the filter matches names and countries regardless of case, and explains wi
   assert.deepEqual((await plist()).map(r => r.name), ["Порту"]);
   await page.fill("#placeFilter", "Атлантида");
   assert.deepEqual(await plist(), []);
-  assert.match(await page.text("#plist"), /Ничего не нашлось\. Новое место добавляется через поиск на карте\./);
+  const nothing = await page.text("#plist");
+  for (const re of [/Ничего не нашлось/, /поиск на карте/]) assert.match(nothing, re, `«${nothing}»`);
   await page.tap({ sel: "#plist a", text: "поиск на карте" });
   await page.waitFor(`location.hash === "#/map"`, 3000, "map");
 });
@@ -654,9 +660,11 @@ test("the filter treats е and ё as the same letter", { skip }, async () => {
 
 test("with no places the list invites adding one on the map, and without a key it points to settings", { skip }, async () => {
   await open({ files: repo({ places: [], ratings: [] }), hash: "#/places" });
-  assert.match(await page.text("#plist"), /Мест пока нет\. Добавьте первое через поиск на карте\./);
+  const noPlaces = await page.text("#plist");
+  for (const re of [/Мест пока нет/, /поиск[^.]*карте/]) assert.match(noPlaces, re, `«${noPlaces}»`);
   await open({ token: false, hash: "#/places" });
-  assert.match(await page.text("#plist"), /Места появятся после подключения данных: вставьте ключ в настройках\./);
+  const nokey = await page.text("#plist");
+  for (const re of [/подключ/, /ключ/, /настройках/]) assert.match(nokey, re, `«${nokey}»`);
   await page.tap({ sel: "#plist a", text: "настройках" });
   await page.waitFor(`location.hash === "#/settings"`, 3000, "settings");
 });

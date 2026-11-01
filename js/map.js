@@ -1,4 +1,4 @@
-import { esc, plural, reducedMotion } from "./util.js";
+import { esc, plural, reducedMotion, sideSheet } from "./util.js";
 
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">Natural Earth</a>';
@@ -120,7 +120,7 @@ export class MapView {
     const sheet = document.getElementById("sheet");
     if (!sheet || sheet.hidden || lat == null) return;
     const pt = this.map.latLngToContainerPoint([lat, lon]);
-    if (innerWidth < 860) { const top = sheet.offsetTop; if (pt.y > top - 40) this.map.panBy([0, pt.y - Math.max(90, top - 80)]); }
+    if (!sideSheet()) { const top = sheet.offsetTop; if (pt.y > top - 40) this.map.panBy([0, pt.y - Math.max(90, top - 80)]); }
     else { const right = sheet.offsetLeft + sheet.offsetWidth; if (pt.x < right + 20) this.map.panBy([pt.x - (right + 80), 0]); }
   }
 
@@ -148,7 +148,7 @@ export class MapView {
   flyTo(lat, lon, zoom) {
     const z = zoom || Math.max(this.map.getZoom(), 9);
     const sheet = document.getElementById("sheet");
-    const mobile = innerWidth < 860;
+    const mobile = !sideSheet();
     const off = sheet && !sheet.hidden ? (mobile ? sheet.offsetHeight / 2 : -200) : 0;
     const target = this.map.project([lat, lon], z).add(mobile ? [0, off] : [off, 0]);
     if (reducedMotion()) this.map.setView(this.map.unproject(target, z), z, { animate: false });

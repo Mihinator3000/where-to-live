@@ -50,6 +50,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const as = ua => page.send("Emulation.setUserAgentOverride", /iPhone/.test(ua) ? { userAgent: ua, platform: "iPhone" } : { userAgent: ua });
 const insets = i => page.send("Emulation.setSafeAreaInsetsOverride", { insets: i }).catch(() => {});
 const until = async (js, ms = 2500) => { try { await page.waitFor(js, ms); return true; } catch (e) { return false; } };
+const frames = () => page.eval(`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`);
+const VIEWS = { map: "v-map", rank: "v-rank", places: "v-places", place: "v-place", rate: "v-rate", settings: "v-settings" };
+// Opens a screen by its address and waits until it is shown and drawn.
+async function view(hash) {
+  await page.eval(`location.hash = ${JSON.stringify(hash)}`);
+  await page.waitFor(`(() => { const v = document.getElementById(${JSON.stringify(VIEWS[hash.split("/")[1]])}); return !!v && !v.hidden && !!v.querySelector("h1"); })()`, 4000, "screen " + hash);
+  await frames();
+}
 
 const point = ([x, y]) => ({ x, y, radiusX: 4, radiusY: 4, force: 1, id: 0 });
 const touch = (type, pts = []) => page.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map(point) });
@@ -60,14 +68,16 @@ async function fingerTap(at, { hold = 60, settle = 350 } = {}) {
   await touch("touchEnd");
   await sleep(settle);
 }
-async function fingerSwipe(from, to, { steps = 12, ms = 260, settle = 550 } = {}) {
+// After the finger lifts, waits until nothing moves any more: the page, every scrolled box and the map stay put for 150 ms.
+const STILL = `new Promise(r => { const snap = () => JSON.stringify([scrollX, scrollY, (document.querySelector(".leaflet-map-pane") || {}).style?.transform || "", ...[...document.querySelectorAll("body *")].filter(e => e.scrollTop || e.scrollLeft).map(e => e.scrollTop + ":" + e.scrollLeft)]); const a = snap(); setTimeout(() => r(snap() === a), 150); })`;
+async function fingerSwipe(from, to, { steps = 12, ms = 260 } = {}) {
   await touch("touchStart", [from]);
   for (let i = 1; i <= steps; i++) {
     await touch("touchMove", [[from[0] + (to[0] - from[0]) * i / steps, from[1] + (to[1] - from[1]) * i / steps]]);
     await sleep(ms / steps);
   }
   await touch("touchEnd");
-  await sleep(settle);
+  await page.waitFor(STILL, 4000, "the page stops moving after the swipe");
 }
 // Centre of the nth element matching sel, scrolled to the middle of the screen first (except on the map and in the card).
 const spot = (sel, nth = 0) => page.eval(`(() => { const e = document.querySelectorAll(${JSON.stringify(sel)})[${nth}]; if (!e) return null; if (!e.closest(".leaflet-container, #sheet")) e.scrollIntoView({ block: "center" }); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
@@ -116,8 +126,7 @@ test("every text field on every screen is at least 16 px, so iPhone does not zoo
   await page.waitFor(`!document.getElementById("layersPanel").hidden && !!document.getElementById("lyCity")`, 3000, "layers panel");
   await check("map with layers");
   for (const hash of ["#/places", "#/place/porto", "#/place/sankt-peterburg", "#/rate", "#/settings"]) {
-    await page.eval(`location.hash = ${JSON.stringify(hash)}`);
-    await sleep(500);
+    await view(hash);
     await check(hash);
   }
   assert.deepEqual(small, [], "iOS zooms in on fields under 16 px and does not zoom back out");
@@ -246,11 +255,9 @@ test("buttons, tabs and links ignore iPhone double-tap zoom, so a quick second t
   await openRate();
   await tapSel('[data-score="интернет"][data-v="4"]');
   out.rate = await page.eval(NO_DTZ);
-  await page.eval(`location.hash = "#/settings"`);
-  await sleep(500);
+  await view("#/settings");
   out.settings = await page.eval(NO_DTZ);
-  await page.eval(`location.hash = "#/rank"`);
-  await sleep(500);
+  await view("#/rank");
   out.rank = await page.eval(NO_DTZ);
   const must = ["#fReset", "#fSave", "#forget"].filter(id => [...out.rate, ...out.settings].some(x => x.startsWith(id + " ")));
   assert.deepEqual(must, [], "confirm-by-second-tap buttons let iOS zoom on a quick double tap (touch-action: manipulation missing)");
@@ -372,7 +379,8 @@ test("scrolling the list inside the place card with a finger scrolls the card, n
   await openValenciaCard();
   await tapSel('#sheet [data-act="simplace"]');
   await page.waitFor(`!!document.querySelector("#simPlaceBox .sim-row")`, 6000, "similar places in the card");
-  await sleep(900);
+  await page.idle(300);
+  await frames();
   await page.eval(`document.getElementById("sheetBody").scrollTop = 0`);
   await sleep(100);
   const c0 = await mapCenter();
@@ -391,7 +399,7 @@ test("when Safari's toolbar shows or hides, the map still fills exactly the spac
   const out = [];
   for (const h of [844, 760, 844]) {
     await page.viewport(390, h);
-    await sleep(500);
+    await page.waitFor(`(async () => { const m = document.getElementById("map").getBoundingClientRect(), n = document.querySelector(".bottomnav").getBoundingClientRect(); return innerHeight === ${h} && Math.round(n.bottom) === innerHeight && Math.round(m.bottom) === Math.round(n.top) && Math.abs((${APP}).mapView.map.getSize().y - m.height) <= 1; })()`, 3000, "map resized").catch(() => {});
     const r = await page.eval(`(async () => { const m = document.getElementById("map").getBoundingClientRect(), a = document.querySelector(".appbar").getBoundingClientRect(), n = document.querySelector(".bottomnav").getBoundingClientRect(); return { top: Math.round(m.top), bottom: Math.round(m.bottom), bar: Math.round(a.bottom), nav: Math.round(n.top), navEnd: Math.round(n.bottom), h: innerHeight, leaflet: (${APP}).mapView.map.getSize().y, el: Math.round(m.height) }; })()`);
     if (r.top !== r.bar || r.bottom !== r.nav || r.navEnd !== r.h || Math.abs(r.leaflet - r.el) > 1) out.push(`${h}px: ${JSON.stringify(r)}`);
   }
@@ -453,8 +461,7 @@ test("links that leave the app (map credits, GitHub, Numbeo, Википедия)
   await openMap();
   await scan("map");
   for (const hash of ["#/settings", "#/place/porto"]) {
-    await page.eval(`location.hash = ${JSON.stringify(hash)}`);
-    await sleep(500);
+    await view(hash);
     await scan(hash);
   }
   assert.deepEqual([...new Set(bad)], [], "in the Home Screen app a plain link replaces the app with the other site and there is no Back button");
@@ -475,7 +482,8 @@ test("in the installed app a place opened from the ranking has a way back to the
   assert.ok(i >= 0, "no back link on the dossier");
   const label = await page.eval(`document.querySelectorAll("#v-place a, #v-place button")[${i}].innerText.trim()`);
   await tapSel("#v-place a, #v-place button", i);
-  await sleep(500);
+  await until(`location.hash === "#/rank" && !document.getElementById("v-rank").hidden && Math.abs(scrollY - ${yRank}) < 200`, 3000);
+  await frames();
   const r = await page.eval(`({ hash: location.hash, y: scrollY })`);
   assert.equal(r.hash, "#/rank", `«${label}» leads to ${r.hash}, not back to the ranking the place was opened from`);
   assert.ok(Math.abs(r.y - yRank) < 200, `the ranking reopens at ${r.y}px instead of at the table (${yRank}px)`);

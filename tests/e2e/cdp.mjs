@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach } from "node:test";
 
@@ -9,6 +9,10 @@ export const CHROME = [process.env.CHROME, "/Applications/Google Chrome.app/Cont
 const MOCK = readFileSync(new URL("./mock.js", import.meta.url), "utf8");
 const SHOTS = new URL("./shots/", import.meta.url).pathname;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Waits are sized for an idle machine. When the machine is busy (the suite runs ~11 Chromes at once, or something else
+// eats the CPU), every wait stretches by the load per core, up to 3×, so a slow machine does not fail a test that only
+// needed more time. On an idle machine the factor is 1 and nothing changes.
+export const loadFactor = () => Math.min(3, Math.max(1, loadavg()[0] / Math.max(1, cpus().length)));
 const live = new Set();
 beforeEach(async () => { for (const p of live) await p.viewport(390, 844).catch(() => {}); });
 const freePort = () => new Promise(r => { const s = createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
@@ -43,7 +47,7 @@ export async function launch() {
 }
 
 export class Page {
-  constructor(wsUrl) { this.wsUrl = wsUrl; this.id = 0; this.pending = new Map(); this.errors = []; this.vp = { w: 390, h: 844, dark: false }; }
+  constructor(wsUrl) { this.wsUrl = wsUrl; this.id = 0; this.pending = new Map(); this.navs = 0; this.errors = []; this.vp = { w: 390, h: 844, dark: false }; }
 
   async open() {
     this.ws = new WebSocket(this.wsUrl);
@@ -67,7 +71,9 @@ export class Page {
   send(method, params = {}) {
     const i = ++this.id;
     this.ws.send(JSON.stringify({ id: i, method, params }));
-    return new Promise((res, rej) => this.pending.set(i, m => (m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result))));
+    const p = new Promise((res, rej) => this.pending.set(i, m => (m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result))));
+    if (process.env.E2E_TRACE) { const t = Date.now(); const tm = setTimeout(() => process.stderr.write(`TRACE slow ${method} ${String(params.expression || params.url || "").slice(0, 160)}\n`), 5000); p.finally(() => { clearTimeout(tm); if (Date.now() - t > 5000) process.stderr.write(`TRACE done after ${Date.now() - t} ms\n`); }).catch(() => {}); }
+    return p;
   }
 
   async eval(js) {
@@ -84,14 +90,44 @@ export class Page {
     await this.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: this.vp.dark ? "dark" : "light" }] });
   }
 
-  async goto(url, settle = 300) {
-    await this.send("Page.navigate", { url });
-    await this.waitFor("document.readyState === 'complete'", 10000);
+  // A new document: waits until the new document is loaded (readyState "complete"; the old document is marked first, so
+  // it cannot pass for the new one), up to 30 s. A change of #hash only is a same-document navigation, so it returns at once.
+  async goto(url, settle = 300, timeout = 30000) {
+    const mark = "goto-" + ++this.navs;
+    await this.eval(`window.__gotoMark = ${JSON.stringify(mark)}`).catch(() => {});
+    const r = await this.send("Page.navigate", { url });
+    if (r.loaderId) await this.waitFor(`document.readyState === "complete" && window.__gotoMark !== ${JSON.stringify(mark)}`, timeout, "page load of " + url);
     await sleep(settle);
   }
 
+  // A real reload: the page is left for about:blank and opened again at the same address, so the app starts from scratch.
+  async reload(settle = 300) {
+    const url = await this.eval("location.href");
+    await this.goto("about:blank", 50);
+    await this.goto(url, settle);
+  }
+
+  // Resolves once no request has been running in the page for `quiet` ms (counted from now). The shared mock counts every
+  // fetch the page makes, whichever test probe wraps it.
+  async idle(quiet = 300, timeout = 10000) {
+    const t0 = await this.eval("performance.now()");
+    await this.waitFor(`(() => { const n = window.__mockNet; return !!n && n.busy === 0 && performance.now() - Math.max(n.at, ${t0}) >= ${quiet}; })()`, timeout, `no request for ${quiet} ms`);
+  }
+
+  // How much slower than an idle machine the page runs right now (≥ 1): a fixed piece of work is timed a few times and the
+  // fastest run is compared with what it takes on an idle machine. Time budgets of speed tests are multiplied by it.
+  async slowdown() {
+    const ms = await this.eval(`(() => { let best = 1e9; for (let k = 0; k < 5; k++) { const t = performance.now(); const a = new Float64Array(200000); let x = 12345; for (let i = 0; i < a.length; i++) { x = (x * 1103515245 + 12345) % 2147483648; a[i] = x; } a.sort(); let s = 0; for (let i = 0; i < a.length; i += 7) s += a[i] % 3; best = Math.min(best, performance.now() - t + (s & 0)); } return best; })()`);
+    return Math.max(1, ms / 15);
+  }
+
   async waitFor(js, timeout = 5000, what = js) {
-    const end = Date.now() + timeout;
+    if (process.env.E2E_TRACE) { const t = Date.now(); try { return await this._waitFor(js, timeout, what); } finally { if (Date.now() - t > 4000) process.stderr.write(`TRACE waitFor ${Date.now() - t} ms (${loadFactor().toFixed(1)}×): ${String(what).slice(0, 120)}\n`); } }
+    return this._waitFor(js, timeout, what);
+  }
+
+  async _waitFor(js, timeout, what) {
+    const end = Date.now() + timeout * loadFactor();
     let last;
     while (Date.now() < end) {
       try { last = await this.eval(`(() => { try { return (${js}); } catch (e) { return false; } })()`); if (last) return last; } catch {}

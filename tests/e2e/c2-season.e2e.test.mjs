@@ -106,6 +106,8 @@ const files$ = () => mockFiles(page);
 const ratingFiles = async () => Object.entries(await files$()).filter(([k]) => k.startsWith("ratings/")).map(([, v]) => JSON.parse(v));
 const liveRatings = async () => (await ratingFiles()).filter(r => !r.deleted);
 const toastText = (re = /./) => page.waitFor(`(() => { const t = document.getElementById("toast"); return !t.hidden && ${re}.test(t.innerText) && t.innerText; })()`, 8000, "toast " + re);
+// «Цифры сохранены» stays under the button until the dossier is drawn again; the toast with it lasts only 3.5 s.
+const factsSaved = () => page.waitFor(`/Цифры сохранены/.test(document.getElementById("factsMsg") ? document.getElementById("factsMsg").innerText : "") || /Цифры сохранены/.test(document.getElementById("toast").innerText)`, 15000, "numbers saved");
 async function stays(js, ms = 1500) { try { await page.waitFor(js, ms); return false; } catch { return true; } }
 
 async function press(sel, settle = 200) {
@@ -135,8 +137,8 @@ async function openDossier(id) {
 /* ---------- what each screen shows ---------- */
 async function rankHead() {
   const t = await page.text("#v-rank header");
-  const m = t.match(/Мест: (\d+) · оценок: (\d+) · поездок-разведок: (\d+) из 20/);
-  return m ? { places: +m[1], ratings: +m[2], trips: +m[3], text: t } : { text: t };
+  const m = [/Мест: (\d+)/, /оценок: (\d+)/, /разведок: (\d+)/].map(re => t.match(re));
+  return m.every(Boolean) ? { places: +m[0][1], ratings: +m[1][1], trips: +m[2][1], text: t } : { text: t };
 }
 const rankRows = () => page.eval(`Object.fromEntries([...document.querySelectorAll("#rank a.row")].map(a => [a.querySelector(".name b").innerText.trim(), { pos: a.querySelector(".pos").innerText.trim(), score: a.querySelector(".score").childNodes[0].textContent.trim(), chips: [...a.querySelectorAll(".chip")].map(c => c.innerText.trim()), dots: [...a.querySelectorAll(".track .dot")].map(d => d.getAttribute("data-tip")), pale: a.classList.contains("pale") }]))`);
 const mainOrder = () => page.eval(`[...document.querySelectorAll("#rank a.row:not(.pale)")].map(a => a.querySelector(".name b").innerText.trim()).filter(n => n !== "Санкт-Петербург")`);
@@ -189,7 +191,7 @@ async function agree(label, { counts, hidden = {}, out = {} } = {}) {
     if (isHidden && R && R.dots.some(t => t.startsWith(partner))) errs.push(`${name}: ${partner}'s dot shows although her/his rating is hidden`);
     if (isHidden && new RegExp(partner + " \\d+/10").test(L.meta + d.trips)) errs.push(`${name}: ${partner}'s year answer shows although hidden`);
     if (name in hidden && hidden[name] !== isHidden) errs.push(`${name}: expected ${hidden[name] ? "" : "not "}hidden on ${current}'s phone`);
-    const yR = R && (R.chips.find(c => c.startsWith("год здесь")) || ""), yL = (L.meta.match(/год здесь: [^·]*(· [А-Я][а-я]+ \d+\/10)?/) || [""])[0].trim();
+    const yR = R && (R.chips.find(c => c.startsWith("год здесь")) || ""), yL = (L.meta.match(/(?:год здесь|здесь год): [^·]*(· [А-Я][а-я]+ \d+\/10)?/) || [""])[0].trim().replace(/^здесь год/, "год здесь");
     if (R && yR !== yL) errs.push(`${name}: year chip «${yR}» in the ranking vs «${yL}» in the places list`);
   }
   assert.deepEqual(errs, [], `${label} (${current}'s phone)`);
@@ -356,7 +358,7 @@ test("Вика's first three trips: each saved trip shows the same score and №
   await page.shot("c2-season-2-vika-first-trip-saved");
   let d = await dossierView("portu");
   assert.match(d.trips, /Вика · 1–14 июня 2026/);
-  assert.match(d.trips, /★ заполнено: 7 из 10/);
+  assert.match(d.trips, /главные вопросы ★: 7 из 10/);
   assert.match(d.trips, /Вика\s*7\/10/);
   assert.match(d.tail, /№1 в рейтинге/);
   await nav("Рейтинг");
@@ -509,8 +511,7 @@ test("mid-season changes — an edited trip, a deleted trip, place numbers, a re
     await openDossier(id);
     for (const [k, v] of Object.entries(facts)) { await page.fill(`#factsForm [name="fact_${k}"]`, String(v)); await page.fill(`#factsForm [name="src_${k}"]`, "объявления"); }
     await page.tap({ text: "Сохранить цифры", within: "#factsForm" });
-    await page.waitFor(`/Цифры сохранены/.test(document.getElementById("factsMsg") ? document.getElementById("factsMsg").innerText : "") || /Цифры сохранены/.test(document.getElementById("toast").innerText)`, 6000, "numbers saved");
-    await sleep(300);
+    await factsSaved();
   };
   await typeFacts("portu", { rent: 950, dinner: 45 });
   let d = await dossierView("portu");
@@ -847,7 +848,7 @@ test("a rent typed on Михаил's phone shows the same badge, subcategory sco
   await page.fill('#factsForm [name="fact_rent"]', "950");
   await page.fill('#factsForm [name="src_rent"]', "idealista, 20 объявлений");
   await page.tap({ text: "Сохранить цифры", within: "#factsForm" });
-  await toastText(/Цифры сохранены/);
+  await factsSaved();
   const read = async () => { const d = await dossierView("portu"); return { score: d.score, badge: await page.eval(`(document.querySelector("#factsForm .badge") || {}).innerText || ""`), cell: await page.eval(`[...document.querySelectorAll(".subtable tr")].find(r => /Аренда на год/.test(r.innerText)).innerText.replace(/\\s+/g, " ")`), src: await page.eval(`document.querySelector('#factsForm [name="src_rent"]').value`) }; };
   const m = await read();
   assert.match(m.badge, /^\d\.\d$/);
@@ -906,8 +907,8 @@ test("the «год здесь» answers read the same on the map card, the ranki
   await onPhone("Михаил", "#/rank");
   const r = (await rankRows())["Порту"].chips.find(c => c.startsWith("год здесь"));
   assert.equal(r, "год здесь: Михаил 8/10 · Вика 7/10");
-  assert.match((await placeRowsVia())["Порту"].meta, /год здесь: Михаил 8\/10 · Вика 7\/10/);
-  assert.match(await sheetOf("Порту"), /год здесь: Михаил 8\/10 · Вика 7\/10/);
+  assert.match((await placeRowsVia())["Порту"].meta, /прожили бы здесь год: Михаил 8\/10 · Вика 7\/10/);
+  assert.match(await sheetOf("Порту"), /прожили бы здесь год: Михаил 8\/10 · Вика 7\/10/);
   const d = await dossierView("portu");
   assert.match(d.trips, /Прожили бы здесь год\? Михаил 8\/10 Вика 7\/10/);
 });

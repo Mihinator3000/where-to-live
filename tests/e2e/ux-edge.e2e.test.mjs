@@ -136,9 +136,10 @@ test("a place with a status the app does not know shows the same status in its h
 test("coordinates saved as text in a place file do not break the map: every place still gets its pin", { skip }, async () => {
   const files = repo({ places: withPlace(like("batumi", { id: "kobuleti", name: "Кобулети", lat: "41.82", lon: "41.78" }), like("batumi", { id: "ureki", name: "Уреки", lat: "41.99", lon: "41.77" })) });
   await open(files, "#/map");
-  await sleep(500);
+  const NAMES = ["Санкт-Петербург", "Порту", "Валенсия", "Тбилиси", "Батуми", "Белград", "Кобулети", "Уреки"];
+  await page.waitFor(`(() => { const l = [...document.querySelectorAll(".leaflet-marker-icon")].map(e => e.getAttribute("aria-label") || "").join(" "); return ${JSON.stringify(NAMES)}.every(n => l.includes(n)); })()`, 4000, "every pin").catch(() => {});
   const labels = (await page.eval(`[...document.querySelectorAll(".leaflet-marker-icon")].map(e => e.getAttribute("aria-label") || "")`)).join(" ");
-  const missing = ["Санкт-Петербург", "Порту", "Валенсия", "Тбилиси", "Батуми", "Белград", "Кобулети", "Уреки"].filter(n => !labels.includes(n));
+  const missing = NAMES.filter(n => !labels.includes(n));
   assert.deepEqual(missing, [], "these places have no pin");
   noErrors("map with text coordinates");
 });
@@ -227,7 +228,8 @@ test("with a place sheet open on a phone, the map credits do not sit on top of t
   await open(repo(), "#/map");
   await page.eval(`[...document.querySelectorAll(".leaflet-marker-icon")].find(e => (e.getAttribute("aria-label") || "").startsWith("Порту")).dispatchEvent(new MouseEvent("click", { bubbles: true }))`);
   await page.waitFor(`!document.getElementById("sheet").hidden`, 3000, "place sheet");
-  await sleep(500);
+  await page.idle(200);
+  await page.eval(`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`);
   const r = await page.eval(`(() => { const a = document.querySelector(".leaflet-control-attribution"); if (!a || a.closest("[hidden]")) return null; const ar = a.getBoundingClientRect(), s = document.getElementById("sheet").getBoundingClientRect(); if (!ar.width) return null; const overlap = ar.top < s.bottom && ar.bottom > s.top && ar.left < s.right && ar.right > s.left; const hit = document.elementFromPoint(ar.left + ar.width / 2, ar.top + ar.height / 2); return { overlap, onTop: !!hit && a.contains(hit) }; })()`);
   assert.ok(!r || !(r.overlap && r.onTop), "the «© OpenStreetMap · Natural Earth» line is drawn over the place sheet");
 });

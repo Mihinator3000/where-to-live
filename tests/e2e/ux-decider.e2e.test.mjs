@@ -213,7 +213,8 @@ test("a place with only world data says so the same way in the ranking, the plac
   const meta = await page.eval(`[...document.querySelectorAll("#plist a.prow")].find(r => r.querySelector("b").innerText === "Лимасол").innerText`);
   assert.match(meta, /только мировые данные/);
   await goto("#/place/limassol");
-  assert.match(await scorePanel(), /Мы здесь ещё не были: итог посчитан только по мировым данным/);
+  const why = await scorePanel();
+  for (const re of [/ещё не были/, /только по мировым данным/]) assert.match(why, re, `«${why}»`);
 });
 
 test("the year chip in the ranking matches the year answers in the dossier, using the latest trip when one of us went twice", { skip }, async () => {

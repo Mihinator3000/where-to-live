@@ -148,7 +148,7 @@ function plain(text, what) {
 
 test("when GitHub answers the first load with an error page, the banner says what happened and what to do, without an HTTP code", { skip }, async () => {
   await open({ hash: "#/rank", local: { "c2:rules": [{ url: GH, status: 502, text: "<html><body><h1>502 Bad Gateway</h1></body></html>", type: HTML }] } });
-  assert.equal(await syncText(), "Ошибка связи");
+  assert.equal(await syncText(), "GitHub не отвечает");
   const b = await errBanner();
   assert.match(b, /GitHub/, `«${b}»`);
   assert.match(b, /попроб|нажмите|подожд|позже/i, `no next step: «${b}»`);
@@ -158,7 +158,7 @@ test("when GitHub answers the first load with an error page, the banner says wha
 test("when GitHub sends a web page or a cut-off reply instead of data, the banner speaks Russian, not a JSON parser error", { skip }, async () => {
   for (const [what, text] of [["captive Wi-Fi page", "<!DOCTYPE html><html><body>Войдите в сеть кафе</body></html>"], ["cut-off reply", '{"data":{"repository":{"ref"']]) {
     await open({ hash: "#/rank", local: { "c2:rules": [{ url: GH, status: 200, text, type: what.includes("page") ? HTML : "application/json" }] } });
-    assert.equal(await syncText(), "Ошибка связи", what);
+    assert.equal(await syncText(), "GitHub не отвечает", what);
     const b = await errBanner();
     assert.match(b, /попроб|нажмите|подожд|позже/i, `${what}: no next step: «${b}»`);
     plain(b, what);
@@ -168,14 +168,14 @@ test("when GitHub sends a web page or a cut-off reply instead of data, the banne
 
 test("after a failed first load the ranking does not claim «Мест: 0 · оценок: 0»", { skip }, async () => {
   await open({ hash: "#/rank", local: { "c2:rules": [{ url: GH, status: 500, json: { message: "Server Error" } }] } });
-  assert.equal(await syncText(), "Ошибка связи");
+  assert.equal(await syncText(), "GitHub не отвечает");
   const head = await page.text("#v-rank header");
   assert.doesNotMatch(head, /Мест: 0\b|оценок: 0\b|0 из 20/, `nothing was loaded, yet the header counts zero: «${head}»`);
 });
 
 test("after a failed first load, tapping the status tries again and our data appears once GitHub answers", { skip }, async () => {
   await open({ hash: "#/rank", local: { "c2:rules": [{ url: GH, status: 503, text: "<html>Service Unavailable</html>", type: HTML, times: 1 }] } });
-  assert.equal(await syncText(), "Ошибка связи");
+  assert.equal(await syncText(), "GitHub не отвечает");
   assert.doesNotMatch(await page.text("#rank"), /Порту/);
   await page.tap({ sel: "#syncBtn" });
   await page.waitFor(`document.getElementById("syncText").innerText === "Подключено"`, 6000, "loaded on retry");
@@ -252,7 +252,7 @@ test("a rate-limited save keeps the answers and says when they go out, not «с�
   assert.ok(m.includes(at) || /\b(29|30)\s*мин/.test(m), `does not say «до ${at}»: «${m}»`);
 });
 
-test("with a key that can read but not write, the form says the answers stayed and to replace the key in settings, and the status is not «Ошибка связи»", { skip }, async () => {
+test("with a key that can read but not write, the form says the answers stayed and to replace the key in settings, and the status is not «GitHub не отвечает»", { skip }, async () => {
   await open({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await rules([{ url: GH, body: COMMIT, status: 403, json: { message: "Resource not accessible by personal access token" } }]);
@@ -263,7 +263,7 @@ test("with a key that can read but not write, the form says the answers stayed a
   assert.equal((await commits()).length, 0);
   assert.match(m, /остал|не сохран/i, `the user does not learn whether the rating is lost: «${m}»`);
   assert.match(m, /настройк/i, `the user is not told where to fix it: «${m}»`);
-  assert.notEqual(await syncText(), "Ошибка связи", "this is a key without write rights, not a connection problem");
+  assert.notEqual(await syncText(), "GitHub не отвечает", "this is a key without write rights, not a connection problem");
 });
 
 test("a GitHub internal error reported inside a normal reply («Something went wrong…») reaches the user in Russian", { skip }, async () => {
@@ -347,7 +347,7 @@ test("when the key is revoked mid-session the rating waits on the device, the ba
   assert.equal(await syncText(), "Ключ не подходит");
   const b = await errBanner();
   assert.match(b, /настройк/i, `«${b}»`);
-  assert.match(b, /не потеряются|сохранен/i, `«${b}»`);
+  assert.match(b, /не потеря(ется|ются)|сохранен/i, `«${b}»`);
   await go("#/settings");
   await page.fill('#tokenForm [name="token"]', "github_pat_TEST_new_key");
   await page.tap({ text: "Сохранить и проверить" });
@@ -374,7 +374,7 @@ test("a rating saved after the data repository disappeared stays on the device a
   await page.waitFor(`location.hash === "#/place/batumi" || document.getElementById("fMsg").innerText.trim() !== ""`, 6000, "save result");
   const queued = await pending(), msg = await fMsg();
   assert.ok(queued.length === 1 || (await val("#fReview")) === "Отзыв без хранилища", `the answers are neither queued nor kept in the form (${msg})`);
-  if (queued.length) assert.match(await errBanner(), /не потеряются/);
+  if (queued.length) assert.match(await errBanner(), /не потеря(ется|ются)/);
 });
 
 /* =================== other saves: card, place, weights, deletion =================== */
@@ -460,7 +460,7 @@ test("the confirming tap on «Удалить оценку» shows progress, and 
   await page.click(r.x, r.y); await sleep(80);
   await page.click(r.x, r.y); await sleep(80);
   await page.waitFor(`location.hash === "#/place/porto"`, 8000, "back in the dossier");
-  await sleep(2500);
+  await page.idle(400);
   await knob("mock:delay", null);
   assert.ok(busy.d || /Удаляю/.test(busy.t), `while deleting the button still reads «${busy.t}» and can be pressed`);
   assert.equal((await commits()).length, 1, "one deletion commit");
@@ -475,7 +475,7 @@ test("an accidental double tap on «Удалить оценку» only asks for 
   await page.click(r.x, r.y);
   await sleep(90);
   await page.click(r.x, r.y);
-  await sleep(1200);
+  await page.idle(500);
   assert.equal((await commits()).length, 0, "a double tap passed the «Точно удалить?» step and the rating was deleted");
   assert.equal((await doc("ratings/r1.json")).deleted, false);
 });
@@ -489,7 +489,7 @@ test("three quick taps on «Сохранить карточку» on a slow netw
   await page.click(r.x, r.y); await sleep(40);
   await page.click(r.x, r.y);
   await page.waitFor(`document.getElementById("placeMsg") && /сохранена/.test(document.getElementById("placeMsg").innerText)`, 8000, "saved");
-  await sleep(1200);
+  await page.idle(400);
   await knob("mock:delay", null);
   assert.equal((await commits()).length, 1);
   assert.equal((await doc("places/porto.json")).archetype, "город у океана");
@@ -505,7 +505,7 @@ test("two quick taps on «Добавить как место» on a slow network
   await page.click(r.x, r.y); await sleep(40);
   await page.click(r.x, r.y);
   assert.match(await toastText(/Добавлено/), /Будва/);
-  await sleep(600);
+  await page.idle(400);
   await knob("mock:delay", null);
   assert.deepEqual(Object.keys(await files()).filter(k => /budva/.test(k)), ["places/budva.json"]);
   assert.equal((await commits()).length, 1);
@@ -520,7 +520,7 @@ test("two quick taps on «Сохранить и проверить» check and s
   await page.click(r.x, r.y); await sleep(40);
   await page.click(r.x, r.y);
   await page.waitFor(`document.getElementById("syncText").innerText === "Подключено"`, 8000, "connected");
-  await sleep(800);
+  await page.idle(400);
   await knob("mock:delay", null);
   const calls = await page.eval(`window.__c2calls.filter(c => c.startsWith("/graphql"))`);
   assert.ok(calls.length <= 2, `the key was checked and the data loaded ${calls.length} times`);
@@ -536,7 +536,7 @@ test("two quick taps on «Записать мою» write my unsent version once
   await page.click(r.x, r.y); await sleep(40);
   await page.click(r.x, r.y);
   await toastText(/Записано/);
-  await sleep(600);
+  await page.idle(400);
   await knob("mock:delay", null);
   assert.equal((await commits()).length, 1);
   assert.equal((await doc("places/porto.json")).questions, "Мой вопрос с телефона");
@@ -618,8 +618,9 @@ test("when the phone's storage is full, the rating form warns that answers will 
   await knob("c2:quota", "^wtl:(draft|drafts)$");
   await score("интернет", 4);
   await page.fill("#fReview", "Черновик без места в памяти");
-  await sleep(800);
-  const shown = await page.eval(`["fTop", "rateBanner", "fMsg"].map(id => (document.getElementById(id) || {}).innerText || "").concat(window.__toasts || []).join(" | ")`);
+  const SHOWN = `["fTop", "rateBanner", "fMsg"].map(id => (document.getElementById(id) || {}).innerText || "").concat(window.__toasts || []).join(" | ")`;
+  await page.waitFor(`/памят|переполн|не сохраня|места на/i.test(${SHOWN})`, 4000, "a warning about full storage").catch(() => {});
+  const shown = await page.eval(SHOWN);
   await knob("c2:quota", null);
   assert.match(shown, /памят[ьи] (телефона|браузера|устройства)|переполн|не сохраня[её]тся|места на (устройстве|телефоне)/i, `the draft silently stopped being saved on the phone; the form says only «${shown}»`);
 });
@@ -631,7 +632,7 @@ test("when the browser blocks site storage, saving a key explains why the device
   await go("#/settings", 400);
   await page.fill('#tokenForm [name="token"]', "github_pat_TEST_e2e");
   await page.tap({ text: "Сохранить и проверить" });
-  await sleep(1500);
+  await page.waitFor(`document.getElementById("tokenMsg").innerText.trim() && !/Проверяю/.test(document.getElementById("tokenMsg").innerText) || window.__toasts.length`, 6000, "an answer to «Сохранить и проверить»").catch(() => {});
   const msg = await page.text("#tokenMsg"), said = (await toasts()).join(" | ");
   const status = await syncText();
   await knob("c2:nols", null);
@@ -709,7 +710,7 @@ test("after a failed OpenStreetMap search, pressing Enter again searches again a
 test("a slow OpenStreetMap search says it is searching while it waits", { skip }, async () => {
   await open({ hash: "#/map", local: { "c2:rules": [{ url: "nominatim.openstreetmap.org/search", delay: 2500, status: 200, json: [] }] } });
   await searchEverywhere("Херцег");
-  await sleep(600);
+  await page.waitFor(`/Ищу в OpenStreetMap/.test(document.getElementById("searchResults").innerText)`, 2000, "searching note").catch(() => {});
   assert.match(await results(), /Ищу в OpenStreetMap/);
   await page.waitFor(`!/Ищу в OpenStreetMap/.test(document.getElementById("searchResults").innerText)`, 6000, "answered");
   assert.match(await results(), /Ничего не нашлось|уже есть/);

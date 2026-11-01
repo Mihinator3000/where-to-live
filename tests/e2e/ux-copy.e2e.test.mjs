@@ -485,7 +485,7 @@ test("a GitHub server error banner says what to do next, not only «GitHub от�
   await page.eval(`localStorage.setItem("test:status", "500")`);
   try {
     await page.tap({ sel: "#syncBtn" });
-    await page.waitFor(`document.getElementById("syncText").innerText === "Ошибка связи"`, 6000, "error shown");
+    await page.waitFor(`document.getElementById("syncText").innerText === "GitHub не отвечает"`, 6000, "error shown");
     const t = await page.text("#v-rank .banner.err");
     assert.match(t, /попроб|позже|повтор|нажмите|обнов/i, `«${t}»`);
   } finally {

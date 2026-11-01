@@ -1,12 +1,14 @@
 import { $, esc, local, daysBetween, uid, plural, todayISO } from "./util.js";
+import { MIN_OWN } from "./calc.js";
 
 const HALF = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 export const CONF = { A: "проверили в быту", B: "видели как туристы", C: "со слов живущих", D: "по сайтам и рейтингам" };
 export const MODE_LABEL = { "отпуск": "не работали", "удалёнка": "работали все будни", "смешанно": "работали часть дней" };
-const emptyForm = (who = local.get("me", "")) => ({ id: null, createdAt: null, who, place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", questions: "", scores: {}, conf: {}, notes: {}, draftId: null, stamp: null, _oid: null });
+const emptyForm = (who = local.get("me", "")) => ({ id: null, createdAt: null, who, by: local.get("me", ""), place: "", start: "", end: "", season: "", mode: "", housing: "", retro: false, year: null, veto: "", review: "", surprises: "", questions: "", scores: {}, conf: {}, notes: {}, draftId: null, stamp: null, _oid: null });
 const cap = s => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 const keyOf = f => (f.id ? "edit:" + f.id : f.place || "_new");
-const snap = f => JSON.stringify(Object.assign({}, f, { _orig: undefined, _oid: undefined, _was: undefined }));
+const snap = f => JSON.stringify(Object.assign({}, f, { by: undefined, _orig: undefined, _oid: undefined, _was: undefined }));
+const ownerOf = d => d.by || d.who || "";
 const FIELDS = ["start", "end", "days", "season", "mode", "housing", "retro", "year", "veto", "review", "surprises"];
 const same = (a, b) => JSON.stringify(a == null || a === "" ? null : a) === JSON.stringify(b == null || b === "" ? null : b);
 function diff(body, was) {
@@ -67,8 +69,16 @@ export class RateForm {
     this.PEOPLE = schema.people;
     this.STAR_KEYS = schema.cats.filter(c => c.star && c.form).map(c => c.key);
     this.GROUPS = schema.groups.map(g => ({ g, cats: schema.cats.filter(c => c.group === g.key && c.form).sort((a, b) => Number(b.star) - Number(a.star) || Number(!!a.opt) - Number(!!b.opt)) })).filter(x => x.cats.length);
-    this.form = Object.assign(emptyForm(), local.get("draft", {}));
+    const saved = local.get("draft", {}) || {};
+    this.form = Object.assign(emptyForm(), saved, { by: saved.by || "" });
     this.drafts = local.get("drafts", {});
+    if (!this.own(this.form)) {
+      const k = keyOf(this.form);
+      if (hasContent(this.form)) this.drafts[this.drafts[k] ? k + "~" + Date.now().toString(36) : k] = this.form;
+      this.form = emptyForm();
+      local.set("draft", this.form);
+      local.set("drafts", this.drafts);
+    }
     this.restored = !this.form.id && hasContent(this.form);
     this.onlyStar = local.get("onlyStar", true);
     this.armed = "";
@@ -81,18 +91,17 @@ export class RateForm {
     this.build();
   }
 
-  saveDraft() { clearTimeout(this.timer); this.timer = setTimeout(() => { this.timer = null; this.stored(local.set("draft", this.form)); }, 300); }
+  saveDraft() { this.form.by = local.get("me", ""); clearTimeout(this.timer); this.timer = setTimeout(() => { this.timer = null; this.stored(local.set("draft", this.form)); }, 300); }
 
   flush() { if (!this.timer) return; clearTimeout(this.timer); this.timer = null; this.stored(local.set("draft", this.form)); }
 
-  own(d) { const me = local.get("me", ""); return d && (!me || !d.who || d.who === me) ? d : null; }
+  own(d) { const me = local.get("me", ""); return d && (!me || !ownerOf(d) || ownerOf(d) === me) ? d : null; }
 
   forWho(who) {
-    const f = this.form;
-    if (f.who === who) return;
-    if (f.who && (f.id || hasContent(f))) this.switchTo(emptyForm(who));
-    else if (f.place && this.drafts[f.place] && this.drafts[f.place].who === who) this.switchTo(this.drafts[f.place]);
-    else { f.who = who; this.persist(); this.sync(); }
+    const f = this.form, owner = ownerOf(f);
+    if (f.id || hasContent(f)) { if (owner && owner !== who) this.switchTo(emptyForm(who)); else if (!owner) { f.who = f.who || who; f.by = who; this.persist(); this.sync(); } return; }
+    if (f.place && this.drafts[f.place] && ownerOf(this.drafts[f.place]) === who) this.switchTo(this.drafts[f.place]);
+    else { f.who = who; f.by = who; this.persist(); this.sync(); }
   }
 
   persist() { this.stored(local.set("draft", this.form) && local.set("drafts", this.drafts)); }
@@ -132,7 +141,7 @@ export class RateForm {
     const extra = this.schema.cats.filter(c => c.form && !c.star).length;
     let html = `<h1>Оценить поездку</h1><div id="fTop"></div><div class="panel fcard">
       <h2>Кто и где</h2>
-      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. Пропускайте то, что не проверили: пустой ответ лучше догадки.</span><span><b>Шкала 1–5 относительно СПб:</b> 1 — сильно хуже, 3 — как в СПб, 5 — сильно лучше для нас: тише, чище, безопаснее.</span><span>Аренду и цены здесь не спрашиваем: их вписывают в «Цифры места» в досье.</span></div>
+      <div class="help"><span>Каждый оценивает сам, не глядя в оценки другого. <b>Шкала 1–5 относительно СПб:</b> 3 — как в СПб, 5 — сильно лучше для нас. Пропускайте то, что не проверили.</span><details class="inline"><summary>Как оценивать</summary><span>1 — сильно хуже СПб, 5 — сильно лучше для нас: тише, чище, безопаснее. Пустой ответ лучше догадки.</span> <span>Аренду и цены здесь не спрашиваем: их вписывают в «Цифры места» в досье.</span></details></div>
       <div class="field"><span class="lbl">Кто оценивает</span><div class="seg" role="group" aria-label="Кто оценивает" id="fWho">${this.PEOPLE.map(w => `<button type="button" data-who="${esc(w)}" aria-pressed="false">${esc(w)}</button>`).join("")}</div><span class="small muted" id="fWhoNote" hidden></span></div>
       <div class="field"><label class="lbl" for="fPlace">Место</label><select id="fPlace"></select><span class="small muted" id="fPlaceHint">Нет в списке — <a href="#/map">найдите на карте</a>, откройте карточку и нажмите «Добавить как место».</span></div>
       <div class="frow">
@@ -233,7 +242,7 @@ export class RateForm {
       return;
     }
     if (b.id === "fCancel") { this.drop(f); this.form = emptyForm(f.who); this.armed = ""; this.persist(); this.setPlaces(this.places); this.msg("Правка отменена"); return; }
-    if (b.id === "fNew") { this.switchTo(this.drafts._new || emptyForm(f.who)); window.scrollTo(0, 0); return; }
+    if (b.id === "fNew") { this.switchTo(this.own(this.drafts._new) || emptyForm(f.who)); window.scrollTo(0, 0); return; }
     if (b.id === "fDelete") { this.remove(); return; }
     if (b.id === "fDeleteNo") { this.armed = ""; this.sync(); $("fDelete").focus(); return; }
     if (b.id === "fShowAll") { this.showAll(); return; }
@@ -363,7 +372,7 @@ export class RateForm {
     wn.textContent = f.id ? "Автора правки не меняют. Если оценку записали не на того — удалите её и оцените заново." : me && f.who && f.who !== me ? `Оценка запишется на имя «${f.who}», хотя на этом устройстве оценивает ${me}. Если оцениваете за себя — нажмите своё имя.` : "";
     wn.hidden = !wn.textContent;
     const qn = $("fQuestionsNow"), qs = f.place && this.hooks.placeQuestions ? this.hooks.placeQuestions(f.place) : "";
-    qn.textContent = qs ? "Уже в карточке: " + qs : "";
+    qn.textContent = qs ? "Уже в карточке: " + String(qs).split("\n").map(s => s.trim()).filter(Boolean).join(" / ") : "";
     qn.hidden = !qs;
     el.querySelectorAll("[data-opt]").forEach(b => b.setAttribute("aria-pressed", String(f[b.dataset.opt] === b.dataset.val)));
     el.querySelectorAll("[data-score]").forEach(b => b.setAttribute("aria-pressed", String(f.scores[b.dataset.score] === Number(b.dataset.v))));
@@ -402,9 +411,12 @@ export class RateForm {
     setVal("fVeto", f.veto); setVal("fReview", f.review); setVal("fSurprises", f.surprises); setVal("fQuestions", f.questions || "");
     const n = Object.keys(f.scores).length;
     const stars = this.STAR_KEYS.filter(k => f.scores[k] != null).length;
-    const need = Math.ceil(this.STAR_KEYS.length / 2);
-    $("fCounts").textContent = `главные ★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · ещё ${n - stars}` : ""}${stars && stars < need ? ` · нужно ${need}` : ""}`;
-    $("fCounts").title = `Ответов на главные ★ вопросы: ${stars} из ${this.STAR_KEYS.length}. В рейтинг место попадает, когда на половину из них ответил кто-то из вас`;
+    const need = Math.ceil(MIN_OWN * this.STAR_KEYS.length);
+    const before = f.place && this.hooks.placeStars ? this.hooks.placeStars(f.place, f.id) : [];
+    const all = this.STAR_KEYS.filter(k => f.scores[k] != null || before.includes(k)).length;
+    const rule = String(f.veto || "").trim() ? "с вето место уйдёт в отсев" : all >= need ? "для рейтинга хватает" : `для рейтинга нужно ${need}${all > stars ? `, у места уже ${all}` : ""}`;
+    $("fCounts").textContent = `главные ★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · ещё ${n - stars}` : ""} · ${rule}`;
+    $("fCounts").title = `Ответов на главные ★ вопросы: ${stars} из ${this.STAR_KEYS.length}. В рейтинг место попадает, когда хотя бы на ${need} из них ответил кто-то из вас: ответы всех оценок места считаются вместе`;
     $("fReset").textContent = this.armed === "reset" ? "Точно стереть все ответы?" : "Очистить форму";
     $("fReset").classList.toggle("danger", this.armed === "reset");
     $("fCancel").hidden = !f.id;
@@ -477,7 +489,7 @@ export class RateForm {
       const text = gone ? "Эту оценку удалили на другом устройстве. Ваши ответы остались в форме: нажмите «Сохранить», чтобы записать их как новую оценку, или «Очистить форму»."
         : err.code === "clash" && f._was && (err.theirs || []).length ? (err.theirs.forEach(([k, v]) => { const [a, b] = k.split("."); if (b) f._was[a] = Object.assign({}, f._was[a], { [b]: v }); else f._was[a] = v; }), this.persist(), `Эту оценку только что изменили на другом устройстве${theirText(this.schema, err.theirs)}. Нажмите «Сохранить правку» ещё раз — запишется ваше.`)
         : err.code === "clash" ? "Эту оценку уже изменили на другом устройстве. Ваши правки остались в форме: откройте оценку заново из досье и перенесите их."
-        : err.code === "limit" ? `${err.message}. Оценка не сохранена, ответы остались в форме — нажмите «Сохранить» ещё раз после этого времени.`
+        : err.code === "limit" ? `${String(err.message).replace(/\s+—\s+/, " ")}. Оценка не сохранена, ответы остались в форме — нажмите «Сохранить» ещё раз после этого времени.`
         : err.code === "forbidden" ? "Оценка не сохранена, ответы остались в форме: у ключа нет прав на запись. Замените ключ в настройках — нужен доступ на чтение и запись."
         : err.code === "rejected" ? `${err.message}. Оценка не сохранена, ответы остались в форме. Нажмите «${f.id ? "Сохранить правку" : "Сохранить"}» ещё раз позже; если GitHub откажет снова, причину нужно исправить в хранилище на GitHub — или попросите Claude.`
         : err.code === "storage" ? "Нет связи, а память браузера на этом устройстве переполнена, поэтому оценку не сохранить даже в очередь. Ответы остались в форме — нажмите «Сохранить», когда появится связь."

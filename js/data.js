@@ -59,6 +59,7 @@ export class Data extends EventTarget {
     this.loadedAt = (cache && cache.at) || null;
     this.pending = local.get("pending", []);
     this.status = "idle";
+    this.fresh = false;
     this.error = "";
     this.broken = [];
     this.notice = "";
@@ -149,17 +150,19 @@ export class Data extends EventTarget {
 
   retryLater(e) {
     clearTimeout(this.retryT);
-    if (!this.pending.length || !LATER.includes(e.code)) return;
-    if (!this.failSince) this.failSince = Date.now();
+    const queued = this.pending.length > 0, limit = e.code === "limit";
+    if (!LATER.includes(e.code) || (!queued && !limit)) return;
+    if (queued && !this.failSince) this.failSince = Date.now();
     const step = STEPS[Math.min(this.tries || 0, STEPS.length - 1)];
-    this.tries = (this.tries || 0) + 1;
-    const wait = e.code === "limit" && e.until ? Math.max(step, e.until - Date.now() + 1000) : step;
-    this.limitUntil = e.code === "limit" ? Date.now() + wait : 0;
+    if (queued) this.tries = (this.tries || 0) + 1;
+    const wait = limit && e.until ? Math.max(step, e.until - Date.now() + 1000) : step;
+    this.limitUntil = limit ? Date.now() + wait : 0;
+    this.limitAt = limit ? e.until || 0 : 0;
     this.nextTry = Date.now() + wait;
     this.retryT = setTimeout(() => { this.limitUntil = 0; this.refresh(); }, wait);
   }
 
-  calm() { clearTimeout(this.retryT); this.tries = 0; this.limitUntil = 0; this.nextTry = 0; this.failSince = 0; }
+  calm() { clearTimeout(this.retryT); this.tries = 0; this.limitUntil = 0; this.limitAt = 0; this.nextTry = 0; this.failSince = 0; }
 
   get limited() { return (this.limitUntil || 0) > Date.now(); }
 
@@ -197,6 +200,7 @@ export class Data extends EventTarget {
         await this.flush();
         const res = await this.store.load();
         this.loadedAt = new Date().toISOString();
+        this.fresh = true;
         this.adopt();
         this.status = this.pending.length ? "pending" : "live";
         this.error = res.bad.length ? "Не читаются файлы: " + res.bad.join(", ") : "";
@@ -219,10 +223,11 @@ export class Data extends EventTarget {
     try {
       const head = await this.store.remoteHead();
       if (head !== this.head || this.pending.length || this.status === "error") await this.refresh();
-      else if (this.status === "offline") { this.status = "live"; this.error = ""; this.emit(); }
+      else if (this.status === "offline") { this.status = "live"; this.error = ""; this.fresh = true; this.emit(); }
     } catch (e) {
       if (e.code === "offline" && this.status !== "offline") { this.status = "offline"; this.emit(); }
       else if (["auth", "access"].includes(e.code)) { this.fail(e); this.emit(); }
+      else if (e.code === "limit") { this.fail(e); this.retryLater(e); this.emit(); }
     }
   }
 
@@ -315,7 +320,7 @@ export class Data extends EventTarget {
             local.set("pending", this.pending);
             this.fail(e); this.emit(); throw e;
           }
-          if (e.code === "offline") this.status = "pending"; else this.fail(e);
+          this.fail(e);
           this.retryLater(e);
           this.emit();
           return "queued";
@@ -345,7 +350,7 @@ export class Data extends EventTarget {
           if (e.code === "rejected") { this.emit(); throw e; }
           if (!QUEUE.includes(e.code)) { this.fail(e); this.emit(); throw e; }
           this.hold(changes, message, e);
-          if (e.code === "offline") this.status = "pending"; else this.fail(e);
+          this.fail(e);
           this.retryLater(e);
           this.emit();
           return "queued";

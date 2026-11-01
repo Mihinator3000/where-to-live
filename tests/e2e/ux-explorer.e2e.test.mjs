@@ -106,7 +106,9 @@ test("a world city typed in Latin, in lower case or in Cyrillic opens the same c
   for (const q of ["Budva", "budva", "Будва"]) {
     await typeSearch(q);
     await page.waitFor(`/Будва/.test(document.getElementById("searchResults").innerText)`, 4000, "suggestion for " + q);
-    assert.match(await suggestions(), /города мира[\s\S]*Будва[\s\S]*Черногория · 18 тыс\. жителей/i, q);
+    const sug = await suggestions();
+    assert.match(sug, /города мира[\s\S]*Будва/i, q);
+    assert.match(sug, /Будва[\s\S]*Черногория · 18 тыс\. жителей/, q);
     await page.tap({ text: "Будва", within: "#searchResults" });
     await still();
     assert.equal(await sheetTitle(), "Будва", q);

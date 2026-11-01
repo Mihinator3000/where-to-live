@@ -37,7 +37,12 @@ const PROBE = `(() => {
     const t = document.getElementById("toast");
     if (!t || t.__seen) return;
     t.__seen = true;
-    new MutationObserver(() => { if (!t.hidden && t.textContent) window.__toasts.push(t.textContent); }).observe(t, { childList: true, characterData: true, subtree: true, attributes: true });
+    const log = window.__toastLog = [];
+    new MutationObserver(() => {
+      if (!t.hidden && t.textContent) window.__toasts.push(t.textContent);
+      const shown = !t.hidden && !!t.textContent, last = log[log.length - 1];
+      if (!last || last.shown !== shown || (shown && last.text !== t.textContent)) log.push({ shown, text: t.textContent, at: performance.now() });
+    }).observe(t, { childList: true, characterData: true, subtree: true, attributes: true });
   });
 })();`;
 
@@ -85,6 +90,15 @@ const remote = async path => { const f = (await mockFiles(page))[path]; return f
 const remoteRatings = async (place, who) => Object.entries(await mockFiles(page)).filter(([k]) => k.startsWith("ratings/")).map(([, v]) => JSON.parse(v)).filter(r => r.place === place && (!who || r.who === who) && !r.deleted);
 const toasts = () => page.eval(`window.__toasts.slice()`);
 const toastSeen = (re, ms = 6000) => page.waitFor(`window.__toasts.find(t => ${re}.test(t))`, ms, "toast " + re);
+// How long the toast that matches re stayed on screen, in ms of page time: from when it was shown to when it was hidden.
+// Waits for it to go away by itself (up to timeout); the page records the times, so a busy test machine does not skew them.
+// A toast replaced by another one counts as gone too.
+async function toastLifetime(re, timeout) {
+  const end = `(() => { const l = window.__toastLog || []; const i = l.findIndex(e => e.shown && ${re}.test(e.text)); const j = i < 0 ? null : l.slice(i + 1).find(e => !e.shown || e.text !== l[i].text); return j ? Math.round(j.at - l[i].at) : 0; })()`;
+  await page.waitFor(end, timeout, "toast " + re + " goes away by itself");
+  return page.eval(end);
+}
+const draftHas = text => page.waitFor(`(localStorage.getItem("wtl:draft") || "").includes(${js(text)})`, 4000, "draft saved: " + text);
 const screenText = () => page.eval(`[document.querySelector(".appbar"), document.querySelector(".view:not([hidden])")].map(e => e.innerText).join("\\n")`);
 const alertsText = () => page.eval(`[document.getElementById("syncText"), ...document.querySelectorAll(".view:not([hidden]) .banner, .view:not([hidden]) .msg")].map(e => e.innerText.trim()).filter(Boolean).join(" / ")`);
 const value = sel => page.eval(`document.querySelector(${js(sel)}).value`);
@@ -274,7 +288,7 @@ test("while the place card is saving on a slow network the button shows it, and 
   assert.ok(busy.disabled || /сохраня|отправля/i.test(busy.text + " " + busy.msg), `nothing shows that the card is being saved: ${js(busy)}`);
   await page.tap({ text: "Сохран", within: "#placeForm" }, 120).catch(() => {});
   await page.waitFor(`/^Сохранено/.test(document.getElementById("syncText").innerText)`, 8000, "saved");
-  await sleep(2000);
+  await page.idle(400);
   assert.equal((await remote("places/porto.json")).archetype, "город у океана");
   assert.equal((await mockLog(page)).filter(e => e.op === "add").length, 1);
   assert.doesNotMatch((await toasts()).join("\n") + (await page.text("#v-place")), /другом устройстве/);
@@ -288,7 +302,7 @@ test("saving numbers and then the card right away on a slow network saves both w
   await page.tap({ text: "Сохранить цифры" }, 100);
   await page.tap({ text: "Сохранить карточку" }, 100);
   await page.waitFor(`(() => { const m = document.getElementById("placeMsg"); return (m && m.innerText) || !document.querySelector("#placeForm"); })()`, 10000, "card save finished").catch(() => {});
-  await sleep(3500);
+  await page.idle(400, 15000);
   const msgs = await page.eval(`["factsMsg", "placeMsg"].map(id => (document.getElementById(id) || {}).innerText || "").join(" | ")`);
   assert.doesNotMatch(msgs, /другом устройстве/, "only this phone was saving: " + msgs);
   const p = await remote("places/porto.json");
@@ -305,14 +319,14 @@ test("while a new place is being added on a slow network «Добавить ка
   await page.waitFor(`(() => { const r = document.getElementById("searchResults"); return !r.hidden && /Бар, Черногория/.test(r.innerText); })()`, 6000, "OSM results");
   await page.tap({ text: "Бар, Черногория", within: "#searchResults" });
   await page.waitFor(`document.querySelector("#sheet:not([hidden]) [data-act=addgeo]")`, 5000, "add sheet");
-  await sleep(1200);
+  await page.idle(300);
   await knob("mock:delay", 1500);
   await page.tap({ sel: "#sheet [data-act=addgeo]" }, 120);
   const busy = await page.eval(`(() => { const b = document.querySelector("#sheet [data-act=addgeo]"); return b ? { disabled: b.disabled, text: b.innerText } : { gone: true }; })()`);
   assert.ok(busy.gone || busy.disabled || /добавляю|сохраняю/i.test(busy.text), `nothing shows that the place is being added: ${js(busy)}`);
   await page.tap({ sel: "#sheet [data-act=addgeo]" }, 120).catch(() => {});
   await page.waitFor(`JSON.parse(localStorage.getItem("mock:files"))["places/bar.json"]`, 8000, "place written");
-  await sleep(2500);
+  await page.idle(400);
   assert.equal((await mockLog(page)).filter(e => e.path === "places/bar.json").length, 1);
   assert.doesNotMatch((await toasts()).join("\n"), /уже есть|другом устройстве/, "my own second tap is reported as a duplicate");
 });
@@ -324,7 +338,8 @@ test("a rating that finishes saving after I moved to another tab confirms it the
   await press("#fSave", 80);
   await page.tap({ sel: '.bottomnav a[data-nav="rank"]' }, 100);
   await page.waitFor(`Object.keys(JSON.parse(localStorage.getItem("mock:files"))).filter(k => k.startsWith("ratings/")).length === 5`, 8000, "rating written");
-  await sleep(800);
+  await toastSeen(/Сохранено/);
+  await page.idle(300);
   assert.equal((await remoteRatings("batumi")).length, 1);
   assert.match((await toasts()).join("\n"), /Сохранено/);
   assert.equal(await page.eval("location.hash"), "#/rank", "the app jumped away from the tab I chose while it was saving");
@@ -350,7 +365,7 @@ test("closing the app in the middle of a slow save keeps the answers, and saving
   await fresh({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await page.fill("#fReview", "Тихо и зелено.");
-  await sleep(500);
+  await draftHas("Тихо и зелено.");
   await knob("mock:delay", 4000);
   await press("#fSave", 150);
   await knob("mock:delay", 100);
@@ -366,7 +381,7 @@ test("when the reply to a save is lost but GitHub got it, saving again does not 
   await fresh({ hash: "#/rate/new/batumi" });
   await score("интернет", 4);
   await page.fill("#fReview", "Тихо и зелено.");
-  await sleep(500);
+  await draftHas("Тихо и зелено.");
   await knob("test:lateReply", 5000);
   await press("#fSave", 400);
   await page.waitFor(`Object.keys(JSON.parse(localStorage.getItem("mock:files"))).length === 11`, 4000, "the rating reached GitHub");
@@ -607,7 +622,7 @@ test("a card edit refused for a revoked key is not lost when I go to settings to
   await page.fill('#tokenForm [name="token"]', "github_pat_TEST_new_phone");
   await page.tap({ text: "Сохранить и проверить" });
   await page.waitFor(`/Подключено/.test(document.getElementById("tokenMsg").innerText)`, 6000, "new key works");
-  await sleep(500);
+  await page.idle(300);
   await go("#/place/porto");
   const kept = (await remote("places/porto.json")).questions === "Где снять зимой?" || (await value('#placeForm [name="questions"]')) === "Где снять зимой?";
   assert.ok(kept, "the question I typed is gone: neither saved nor still in the field");
@@ -620,7 +635,7 @@ test("with a revoked key, tapping the red «Ключ не подходит» sta
   await page.tap({ text: "Сохранить карточку" });
   await page.waitFor(`document.getElementById("syncText").innerText === "Ключ не подходит"`, 6000, "key refused");
   await page.tap({ sel: "#syncBtn" });
-  await sleep(600);
+  await page.waitFor(`location.hash === "#/settings" && !document.getElementById("v-settings").hidden`, 3000, "settings").catch(() => {});
   assert.equal(await page.eval("location.hash"), "#/settings", "the tap only retried with the same dead key");
 });
 
@@ -648,7 +663,7 @@ test("with a revoked key or GitHub down, the screen says my queued changes are k
     await knob("mock:offline", null);
     await knob("test:status", code);
     await page.tap({ sel: "#syncBtn" });
-    await page.waitFor(`["Ключ не подходит", "Ошибка связи"].includes(document.getElementById("syncText").innerText) || /^Ждут GitHub/.test(document.getElementById("syncText").innerText)`, 6000, "failure shown");
+    await page.waitFor(`["Ключ не подходит", "GitHub не отвечает"].includes(document.getElementById("syncText").innerText) || /^Ждут GitHub/.test(document.getElementById("syncText").innerText)`, 6000, "failure shown");
     const t = await alertsText();
     assert.match(t, /очеред|ждут? отправки|не отправлен|ждут github/i, `HTTP ${code}: one change waits on the phone, but the header and banners only say «${t}»`);
     await knob("test:status", null);
@@ -797,7 +812,7 @@ for (const [code, re, what] of [[401, /ключ/i, "a refused key"], [503, /GitH
     await knob("mock:offline", null);
     await knob("test:status", code);
     await page.tap({ sel: "#syncBtn" });
-    await page.waitFor(`["Ключ не подходит", "Ошибка связи"].includes(document.getElementById("syncText").innerText)`, 6000, "failure shown");
+    await page.waitFor(`["Ключ не подходит", "GitHub не отвечает"].includes(document.getElementById("syncText").innerText)`, 6000, "failure shown");
     await sleep(200);
     const rank = await page.text("#rank"), heat = await page.eval(`document.querySelectorAll("#v-rank .block")[1].innerText`);
     for (const [where, t] of [["ranking", rank], ["table", heat]]) {
@@ -828,13 +843,12 @@ test("a long message after a save stays on screen long enough to read it, a shor
   await press("#fSave");
   const long = await toastSeen(/Сохранено/);
   assert.ok(long.length > 80, "fixture: the save message is long: " + long);
-  await sleep(5000);
-  assert.equal(await page.eval(`document.getElementById("toast").hidden ? "" : document.getElementById("toast").innerText`), long, "a long message vanished before it could be read");
-  await page.waitFor(`document.getElementById("toast").hidden`, 6000, "long toast goes away by itself");
+  const longFor = await toastLifetime(/Сохранено/, 12000);
+  assert.ok(longFor >= 5000, `a long message vanished after ${longFor} ms, before it could be read`);
   await page.tap({ sel: "#themeBtn" });
   await toastSeen(/Тема/);
-  await sleep(4000);
-  assert.equal(await page.eval(`document.getElementById("toast").hidden`), true, "a short message lingers too long");
+  const shortFor = await toastLifetime(/Тема/, 8000);
+  assert.ok(shortFor <= 4500, `a short message lingers for ${shortFor} ms`);
   await page.tap({ sel: "#themeBtn" });
   await page.tap({ sel: "#themeBtn" });
 });

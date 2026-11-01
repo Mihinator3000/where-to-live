@@ -49,5 +49,12 @@ export async function openApp(page, base, { files = repo(), token = true, me = "
   return page;
 }
 
+// Waits until the map stands still (no fly-to or zoom running: centre and zoom unchanged for 150 ms) and the page has
+// no request running.
+export async function settleMap(page, timeout = 5000) {
+  await page.waitFor(`import("./js/app.js").then(({ state: s }) => new Promise(r => { const m = s.mapView && s.mapView.map; if (!m) return r(true); const a = m.getCenter(), z = m.getZoom(); setTimeout(() => r(!m._animatingZoom && m.getZoom() === z && m.getCenter().equals(a)), 150); }))`, timeout, "map stands still");
+  await page.idle(150);
+}
+
 export const mockFiles = page => page.eval(`JSON.parse(localStorage.getItem("mock:files") || "{}")`);
 export const mockLog = page => page.eval(`JSON.parse(localStorage.getItem("mock:log") || "[]")`);

@@ -401,7 +401,7 @@ test("closing the app while «Сохраняю…» is shown: after reopening, t
   await page.eval(`localStorage.removeItem("mock:delay")`);
   await page.goto(srv.url + "#/rank", 100);
   await booted();
-  await sleep(500);
+  await page.waitFor(`(document.getElementById("v-rank").innerText + "\\n" + document.getElementById("toast").innerText).split("\\n").some(l => /Батуми/.test(l) && /не (успел|сохран|отправ|записал)|черновик/i.test(l))`, 4000, "a note about the Batumi rating").catch(() => {});
   assert.equal((await ratingsOn("batumi")).length, 0, "precondition: GitHub never got the rating");
   assert.match(await page.eval(`localStorage.getItem("wtl:draft") || ""`), /интернет/, "the answers are still on the phone");
   const lines = await page.eval(`[document.getElementById("v-rank").innerText, document.getElementById("toast").hidden ? "" : document.getElementById("toast").innerText, document.getElementById("syncText").innerText].join("\\n").split("\\n").filter(l => /Батуми/.test(l))`);
@@ -419,7 +419,7 @@ async function cutSave(start) {
   await page.goto(srv.url + "manifest.webmanifest", 50);
   await page.eval(`localStorage.removeItem("mock:delay")`);
   await relaunch(start);
-  await sleep(500);
+  await page.idle(200);
 }
 
 test("a rating save cut off by closing the app is reported on the map, where the installed app reopens, and the link brings the answers back", { skip }, async () => {
@@ -441,7 +441,8 @@ test("a rating save cut off by closing the app is reported on the map, where the
   await press("#fSave");
   await page.waitFor(`location.hash === "#/place/batumi"`, 8000, "saved");
   await page.eval(`location.hash = "#/map"`);
-  await sleep(500);
+  await page.waitFor(`!document.getElementById("v-map").hidden`, 4000, "map");
+  await page.waitFor(`(() => { const n = document.getElementById("mapNote"); return !n || n.hidden; })()`, 3000, "map note gone").catch(() => {});
   assert.equal(await mapNote(), null, "after the rating is saved the map note goes away");
 });
 
@@ -457,7 +458,8 @@ test("an edit of an existing rating cut off by closing the app is reported too, 
   assert.match(banner, /Правка оценки «Порту» не успела сохраниться/, "the rating already exists on GitHub, so the old check took it as saved and said nothing");
   assert.equal(await page.eval(`(document.querySelector("#v-rank .banner.err a[href^='#/rate']") || {}).hash`), "#/rate/r1");
   await page.eval(`location.hash = "#/map"`);
-  await sleep(500);
+  await page.waitFor(`!document.getElementById("v-map").hidden`, 4000, "map");
+  await page.waitFor(`(() => { const n = document.getElementById("mapNote"); return n && !n.hidden && /Правка оценки/.test(n.innerText); })()`, 3000, "map note").catch(() => {});
   assert.match((await mapNote() || {}).text || "", /Правка оценки «Порту»/, "the map tells it too");
   await page.tap({ sel: "#mapNote a" });
   await page.waitFor(`document.querySelector(".edit-head") && location.hash === "#/rate"`, 5000, "edit form");
@@ -473,7 +475,7 @@ test("pressing «Обновить» many times in a row sends one check at a tim
   await sleep(200);
   await page.eval(`window.__gh.length = 0; localStorage.setItem("mock:delay", "600")`);
   for (let i = 0; i < 5; i++) await page.eval(`document.getElementById("syncBtn").click()`);
-  await sleep(1500);
+  await page.idle(300);
   const n = await page.eval(`window.__gh.filter(c => c.u === "/graphql").length`);
   assert.ok(n <= 2, `${n} full downloads for 5 quick taps`);
 });
@@ -582,7 +584,7 @@ test("the place card saved on a slow network is written once even if I leave the
   await page.tap({ text: "Сохранить цифры" }, 50);
   await page.eval(`location.hash = "#/rank"`);
   await page.waitFor(`JSON.parse(JSON.parse(localStorage.getItem("mock:files"))["places/porto.json"]).facts?.rent?.v === 880`, 8000, "rent saved");
-  await sleep(1200);
+  await page.idle(400);
   const adds = (await page.eval(`JSON.parse(localStorage.getItem("mock:log") || "[]")`)).filter(e => e.path === "places/porto.json");
   assert.equal(adds.length, 1, "the card was written more than once");
   assert.deepEqual(page.takeErrors(), []);

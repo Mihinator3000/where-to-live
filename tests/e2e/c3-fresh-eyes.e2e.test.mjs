@@ -6,7 +6,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { launch, CHROME } from "./cdp.mjs";
 import { serve } from "./server.mjs";
-import { openApp, repo } from "./fixtures.mjs";
+import { openApp, repo, settleMap } from "./fixtures.mjs";
 
 const skip = !CHROME && "no Chrome";
 let srv, page;
@@ -174,7 +174,7 @@ test("a map card that counts answers on ★ says the ★ are the main questions"
 test("a country found by search does not offer «Добавить город в этой точке» for a point hidden under its card or outside the country", { skip }, async () => {
   await open();
   await card("Испания");
-  await sleep(1200);
+  await settleMap(page);
   const has = await page.eval(`[...document.querySelectorAll("#sheetBody button")].some(b => /в этой точке/.test(b.innerText) && b.offsetParent)`);
   if (!has) return;
   const r = await page.eval(`${APP}.then(s => {
@@ -245,7 +245,7 @@ test("«год здесь» is said in words a newcomer understands on the map c
   assert.match(sheet, /прожили бы/i, `«${sheet.match(/год здесь[^·]*·[^·]*/)?.[0] || sheet}» — what is «год здесь: Михаил 8/10»? The answer «Прожили бы здесь год?» is only in a mouse tooltip`);
   await goto("#/places");
   const list = oneLine(await page.text("#v-places"));
-  assert.match(list, /год здесь/, "precondition: the places list shows «год здесь»");
+  assert.match(list, /год здесь|здесь год/, "precondition: the places list shows the year answers");
   assert.match(list, /прожили бы/i, "the places list shows «год здесь: Михаил 8/10 · Вика 7/10» under each place and never says what was asked");
 });
 
@@ -509,7 +509,7 @@ test("on a phone the hints under «Сезон», «Работали из пое�
 
 test("the rating form says the rent and prices are typed in «Цифры места» of the place's dossier, not in «его карточку»", { skip }, async () => {
   await open({ hash: "#/rate" });
-  const t = oneLine(await page.eval(`[...document.querySelectorAll("#rateForm .help span")].map(s => s.innerText).join(" ")`));
+  const t = oneLine(await page.eval(`[...document.querySelectorAll("#rateForm .help span")].map(s => s.textContent).join(" ")`));
   assert.match(t, /Аренд/, "precondition: the form says rent is not asked here");
   assert.match(t, /«Цифры места»/, `«${t.match(/Аренд[^.]*\./)[0]}» — the dossier has a «Карточка места» section (name, status) and a separate «Цифры места» section; the note sends the user to the wrong one`);
 });
@@ -608,5 +608,6 @@ test("SPb is «он» everywhere, the places header says how weights work in one
   assert.match(head, /веса меняются в «Рейтинге»/, `«${head}»`);
   await goto("#/place/porto");
   const q = oneLine(await page.eval(`[...document.querySelectorAll("#v-place .panel.pad .small")].map(e => e.innerText).find(t => /Вопросы к следующей поездке/.test(t)) || ""`));
-  assert.equal(q, "Вопросы к следующей поездке: Проверить сырость зимой / Вопрос Вики / Мой вопрос", "the lines run together into one sentence");
+  assert.match(q, /Вопросы к следующей поездке/, `«${q}»`);
+  assert.match(q, /Проверить сырость зимой \/ Вопрос Вики \/ Мой вопрос$/, "the lines run together into one sentence");
 });

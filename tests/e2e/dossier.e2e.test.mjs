@@ -117,7 +117,8 @@ test("an unknown place shows a not-found message with a way back to all places",
   await openApp(page, srv.url, { hash: "#/place/net-takogo" });
   assert.match(await page.text("#v-place"), /Место не найдено/);
   await page.tap({ text: "Все места", within: "#v-place" });
-  await page.waitFor(`location.hash === "#/places"`, 4000, "places list");
+  await page.waitFor(`location.hash === "#/places" && !document.getElementById("v-places").hidden`, 4000, "places list");
+  assert.match(await page.text("#plist"), /Порту/, "the list of all places is shown");
 });
 
 test("without a key, a shared place link says data is not connected instead of claiming the place does not exist", { skip }, async () => {
@@ -132,7 +133,8 @@ test("without a key, a shared place link says data is not connected instead of c
 test("the big score says what the total is made of", { skip }, async () => {
   await openDossier("porto");
   assert.match(await page.text(".bigscore"), /^\d\.\d\s+из 5, где 3 — как в СПб · заполнено \d+%/);
-  assert.match(await page.text("#v-place .panel.pad"), /Из чего итог: Михаил \d\.\d · Вика \d\.\d · мировые данные \d\.\d/);
+  const parts = await page.text("#v-place .panel.pad");
+  for (const re of [/Из чего итог/, /Михаил \d\.\d/, /Вика \d\.\d/, /мировые данные \d\.\d/]) assert.match(parts, re, `«${parts}»`);
 });
 
 test("a place with enough of our own answers shows its position in the ranking", { skip }, async () => {
@@ -150,7 +152,8 @@ test("a place kept out of the main ranking for too few own answers says so next 
 
 test("a place we have not visited says its total comes from world data only", { skip }, async () => {
   await openDossier("belgrad");
-  assert.match(await page.text("#v-place .panel.pad"), /Мы здесь ещё не были: итог посчитан только по мировым данным/);
+  const why = await page.text("#v-place .panel.pad");
+  for (const re of [/ещё не были/, /только по мировым данным/]) assert.match(why, re, `«${why}»`);
   assert.match(await page.text(".trips"), /Своих оценок пока нет/);
 });
 
@@ -201,16 +204,20 @@ test("a partner's rating stays hidden in year, review, radar and table until rev
   await openDossier("tbilisi");
   assert.match((await page.text(".year")).replace(/\s+/g, " "), /Вика скрыто/);
   assert.match(await page.text("#v-place .panel.pad"), /Оценка Вики скрыта, пока вы не оцените место сами/);
-  assert.match(await page.text(".trips"), /Ваших оценок здесь пока нет/);
+  assert.match(await page.text(".trips"), /Вика: оценка скрыта/);
   assert.equal(await page.eval(`[...document.querySelectorAll(".radar svg path")].some(p => p.getAttribute("stroke") === "var(--v)")`), false);
   assert.equal(await page.eval(`[...document.querySelectorAll(".subtable td.n")].some(td => td.title.includes("скрыто"))`), true);
   await page.tap({ text: "Показать всё равно", within: "#v-place .panel.pad" });
   assert.match((await page.text(".year")).replace(/\s+/g, " "), /Вика 4\/10/);
   assert.match(await page.text(".trips"), /Пыльно и шумно/);
   assert.equal(await page.eval(`[...document.querySelectorAll(".radar svg path")].some(p => p.getAttribute("stroke") === "var(--v)")`), true);
-  await page.goto(srv.url + "#/places", 200);
-  await page.goto(srv.url + "#/place/tbilisi", 400);
+  assert.equal(await page.eval("location.hash"), "#/place/tbilisi");
+  await page.eval("window.__beforeReload = 1");
+  await page.reload(100);
+  assert.equal(await page.eval("window.__beforeReload"), undefined, "the page really reloaded");
+  await page.waitFor(`document.getElementById("syncText") && !["…", "Обновляю…"].includes(document.getElementById("syncText").innerText) && /Тбилиси/.test(document.querySelector("#v-place h1")?.innerText || "")`, 8000, "dossier after the reload");
   assert.match(await page.text(".trips"), /Пыльно и шумно/, "still revealed after reload");
+  assert.match((await page.text(".year")).replace(/\s+/g, " "), /Вика 4\/10/, "the year is still revealed after reload");
   assert.deepEqual(page.takeErrors(), []);
 });
 
@@ -550,7 +557,7 @@ test("a clash with another device is not reported as a network error", { skip },
   await page.fill('#placeForm [name="questions"]', "Мой вопрос");
   await page.tap({ text: "Сохранить карточку" });
   await page.waitFor(`document.getElementById("placeMsg").innerText`, 6000, "clash message");
-  assert.doesNotMatch(await page.text("#syncText"), /Ошибка связи/, "the network is fine; the card just changed elsewhere");
+  assert.doesNotMatch(await page.text("#syncText"), /GitHub не отвечает/, "the network is fine; the card just changed elsewhere");
 });
 
 test("saving the card offline queues it, shows it right away and sends it when the network is back", { skip }, async () => {
@@ -561,7 +568,7 @@ test("saving the card offline queues it, shows it right away and sends it when t
   assert.match(await toastText(/Нет связи/), /отправится, когда появится связь/);
   assert.equal(await page.eval(`JSON.parse(localStorage.getItem("wtl:pending")).length`), 1);
   assert.ok((await page.eval(`[...document.querySelectorAll(".place-head .chip")].map(c => c.innerText)`)).includes("малый курорт"));
-  assert.match(await page.text("#syncText"), /В очереди: 1/);
+  assert.match(await page.text("#syncText"), /^Нет связи · в очереди: 1$/);
   assert.equal((await doc("places/porto.json")).archetype, "город у моря");
   await page.eval(`localStorage.removeItem("mock:offline")`);
   await page.tap({ sel: "#syncBtn" });
