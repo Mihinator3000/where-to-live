@@ -254,7 +254,7 @@ export class RateForm {
     }
     if (b.dataset.editrating) { this.hooks.edit(b.dataset.editrating); return; }
     this.msg("");
-    if (b.dataset.who) { if (f.id) return; f.who = b.dataset.who; }
+    if (b.dataset.who) { if (f.id) return; f.who = b.dataset.who; if (!local.get("me", "") && this.hooks.setMe) this.hooks.setMe(f.who); }
     else if (b.dataset.opt) f[b.dataset.opt] = f[b.dataset.opt] === b.dataset.val ? "" : b.dataset.val;
     else if (b.dataset.score) {
       const k = b.dataset.score, v = Number(b.dataset.v);
@@ -415,7 +415,7 @@ export class RateForm {
     const before = f.place && this.hooks.placeStars ? this.hooks.placeStars(f.place, f.id) : [];
     const all = this.STAR_KEYS.filter(k => f.scores[k] != null || before.includes(k)).length;
     const rule = String(f.veto || "").trim() ? "с вето место уйдёт в отсев" : all >= need ? "для рейтинга хватает" : `для рейтинга нужно ${need}${all > stars ? `, у места уже ${all}` : ""}`;
-    $("fCounts").textContent = `главные ★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · ещё ${n - stars}` : ""} · ${rule}`;
+    $("fCounts").textContent = `главные ★ ${stars} из ${this.STAR_KEYS.length}${n > stars ? ` · и ${n - stars} ${plural(n - stars, "ответ", "ответа", "ответов")} без ★` : ""} · ${rule}`;
     $("fCounts").title = `Ответов на главные ★ вопросы: ${stars} из ${this.STAR_KEYS.length}. В рейтинг место попадает, когда хотя бы на ${need} из них ответил кто-то из вас: ответы всех оценок места считаются вместе`;
     $("fReset").textContent = this.armed === "reset" ? "Точно стереть все ответы?" : "Очистить форму";
     $("fReset").classList.toggle("danger", this.armed === "reset");
@@ -473,7 +473,7 @@ export class RateForm {
     try {
       const d = !isNew && f._was ? diff(body, f._was) : null;
       const res = await this.hooks.save(body, { isNew, baseOid: f._oid || undefined, questions: (f.questions || "").trim(), patch: d && d.patch, was: d && d.base });
-      if (!local.get("me", "")) local.set("me", f.who);
+      if (!local.get("me", "")) { if (this.hooks.setMe) this.hooks.setMe(f.who, true); else local.set("me", f.who); }
       this.drop(f);
       if (this.form === f) { this.form = emptyForm(f.who); this.armed = ""; this.shown.clear(); this.restored = false; }
       this.persist();

@@ -552,7 +552,7 @@ test("crawl: the access key is «ключ доступа» everywhere; the word 
 test("crawl: our data on GitHub is «хранилище» in every message; «репозиторий» appears only inside «Технические подробности»", { skip, timeout: 400000 }, async () => {
   const bag = await crawled();
   assert.ok(bag.some(x => /zz-broken/.test(x.t)), "the broken-file banner was not shown");
-  assert.deepEqual(where(bag, x => /репозитор/i.test(x.t) && x.z !== "Технические подробности" && !/^Репозиторий с данными$/.test(x.t)), [], "a message for the user says «репозиторий» while the rest of the app says «хранилище»");
+  assert.deepEqual(where(bag, x => /репозитор/i.test(x.t) && x.z !== "Технические подробности"), [], "a message for the user says «репозиторий» while the rest of the app says «хранилище»");
 });
 
 test("crawl: «хранилище» always means our data on GitHub, never the phone's or the browser's own memory", { skip, timeout: 400000 }, async () => {

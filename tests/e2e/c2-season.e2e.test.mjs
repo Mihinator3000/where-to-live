@@ -142,7 +142,7 @@ async function rankHead() {
 }
 const rankRows = () => page.eval(`Object.fromEntries([...document.querySelectorAll("#rank a.row")].map(a => [a.querySelector(".name b").innerText.trim(), { pos: a.querySelector(".pos").innerText.trim(), score: a.querySelector(".score").childNodes[0].textContent.trim(), chips: [...a.querySelectorAll(".chip")].map(c => c.innerText.trim()), dots: [...a.querySelectorAll(".track .dot")].map(d => d.getAttribute("data-tip")), pale: a.classList.contains("pale") }]))`);
 const mainOrder = () => page.eval(`[...document.querySelectorAll("#rank a.row:not(.pale)")].map(a => a.querySelector(".name b").innerText.trim()).filter(n => n !== "Санкт-Петербург")`);
-const placeRows = () => page.eval(`Object.fromEntries([...document.querySelectorAll("#plist a.prow")].map(a => [a.querySelector("b").innerText.trim(), { score: a.querySelector(".score").innerText.trim(), meta: a.querySelector(".meta").innerText.replace(/\\s+/g, " ").trim() }]))`);
+const placeRows = () => page.eval(`Object.fromEntries([...document.querySelectorAll("#plist a.prow")].map(a => [a.querySelector("b").innerText.trim(), { score: a.querySelector(".score").innerText.trim(), meta: [...a.querySelectorAll(".meta")].map(m => m.innerText).join(" ").replace(/\\s+/g, " ").trim() }]))`);
 const pins = () => page.eval(`(async () => Object.fromEntries((${APP}).mapView.placeList.map(p => [p.name, { text: p.text, out: !!p.out, thin: !!p.thin, base: !!p.base }])))()`);
 async function dossierView(id) {
   await openDossier(id);
@@ -181,7 +181,7 @@ async function agree(label, { counts, hidden = {}, out = {} } = {}) {
     if (no !== pos) errs.push(`${name}: dossier says «${d.tail}», ranking position ${pos || "—"}`);
     const isOut = /в рейтинг не входит/.test(d.tail);
     if (isOut !== !R) errs.push(`${name}: dossier out=${isOut}, ranking row ${R ? "present" : "absent"}`);
-    if (isOut && !new RegExp(`Отсев:.*${name}`).test(rankText)) errs.push(`${name}: out of the ranking but not listed under «Отсев»`);
+    if (isOut && !new RegExp(`Отсев и вето:.*${name}`).test(rankText)) errs.push(`${name}: out of the ranking but not listed under «Отсев»`);
     if (isOut !== /отсев|вето/.test(L.meta)) errs.push(`${name}: dossier out=${isOut}, places list «${L.meta}»`);
     if (P && isOut !== P.out) errs.push(`${name}: dossier out=${isOut}, pin faded=${P.out}`);
     if (name in out && out[name] !== isOut) errs.push(`${name}: expected ${out[name] ? "" : "not "}out of the ranking`);
@@ -563,7 +563,7 @@ test("mid-season changes — an edited trip, a deleted trip, place numbers, a re
   const mik = await agree("Mikhail after Vika's changes", { counts: { places: 6, ratings: 6, trips: 4 }, out: { "Бар": true, "Будва": true }, hidden: { "Белград": false } });
   await nav("Рейтинг");
   const rank = (await page.text("#rank")).replace(/\s+/g, " ");
-  assert.match(rank, /Отсев: .*Бар — мёртвый зимой, всё закрыто/);
+  assert.match(rank, /Отсев и вето: .*Бар — мёртвый зимой, всё закрыто/);
   assert.match(rank, /Будва — вето Вики: толпы и шум всё лето/);
   assert.equal(mik.list["Порту"].score, vik.list["Порту"].score, "Порту: both phones see the same trips and numbers");
   assert.deepEqual(page.takeErrors(), []);
@@ -649,7 +649,7 @@ test("a veto saved on a place we both rated is confirmed as taking it out of the
   const t = await saveTrip("budva");
   assert.doesNotMatch(t, /Рейтинг обновился|В рейтинг место попадёт/, `after a veto the toast says «${t}»`);
   assert.match(t, /вето|не входит|убран|исключ/i, `the toast does not say the veto took Будва out: «${t}»`);
-  assert.match(await rankAll(), /Отсев:.*Будва — вето Вики/);
+  assert.match(await rankAll(), /Отсев и вето:.*Будва — вето Вики/);
 });
 
 test("when Михаил rates a place Вика vetoed while it was hidden, the confirmation tells him the place is out because of her veto", { skip }, async () => {
@@ -688,7 +688,7 @@ test("a veto Вика saves on a place Михаил has not rated shows on his p
   const meta = (await placeRowsVia())["Тбилиси"].meta;
   await nav("Карта");
   const pin = (await pins())["Тбилиси"];
-  const seen = /Отсев:.*Тбилиси — вето Вики/.test(rank) && /вето/.test(meta) && pin.out;
+  const seen = /Отсев и вето:.*Тбилиси — вето Вики/.test(rank) && /вето/.test(meta) && pin.out;
   const told = /вето[^.]*(Михаил|не увидит)|Михаил[^.]*вето/.test(t + " " + label);
   assert.ok(seen || told, `Vika was told «${label}» and «${t}», yet on Mikhail's phone Тбилиси is «${meta}», pin faded=${pin.out}, ranking: ${rank.match(/Тбилиси[^·]{0,60}/)?.[0]}`);
 });
@@ -867,7 +867,7 @@ test("rejecting a place on Вика's phone shows the reason on Михаил's r
   await page.tap({ text: "Сохранить карточку", within: "#placeForm" });
   await toastText(/Карточка сохранена/);
   await onPhone("Михаил", "#/rank");
-  assert.match(await rankAll(), /Отсев:.*Белград — дорого и далеко от моря/);
+  assert.match(await rankAll(), /Отсев и вето:.*Белград — дорого и далеко от моря/);
   assert.match((await placeRowsVia())["Белград"].meta, /отсев/);
   assert.match(await sheetOf("Белград"), /Отсев: дорого и далеко от моря/);
   const d = await dossierView("belgrad");

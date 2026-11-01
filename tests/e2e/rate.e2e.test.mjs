@@ -112,14 +112,17 @@ test("who is rating starts as this device's person and the switch is what gets s
   assert.equal(r.who, "Михаил");
 });
 
-test("answering «Кто вы на этом устройстве?» on the rate screen also fills «Кто оценивает»", { skip }, async () => {
+test("on a device without «Кто я» the rate screen asks only «Кто оценивает», and saving remembers the answer as «Кто я»", { skip }, async () => {
   await fresh({ hash: "#/rate/new/batumi", me: null });
-  assert.match(await page.text("#rateBanner"), /Кто вы на этом устройстве/);
+  assert.doesNotMatch(await page.text("#rateBanner"), /Кто вы на этом устройстве/, "a second «Кто вы» picker right above «Кто оценивает»");
+  assert.equal(await page.eval(`document.querySelectorAll("#v-rate [data-setme]").length`), 0);
   assert.deepEqual(await pressed("[data-who]"), [], "nobody is preselected yet");
-  await press('[data-setme="Вика"]');
-  assert.match(await toastText(/Это устройство/), /Вика/, "the answer is confirmed");
-  assert.doesNotMatch(await page.text("#rateBanner"), /Кто вы на этом устройстве/);
-  assert.deepEqual(await pressed("[data-who]"), ["Вика"], "I just said I am Вика, the form should not ask again");
+  await press('[data-who="Вика"]');
+  await score("интернет", 4);
+  await saveAndLand("batumi");
+  assert.equal(await page.eval(`JSON.parse(localStorage.getItem("wtl:me"))`), "Вика", "the device now knows who it is");
+  const [r] = await ratingsOn("batumi");
+  assert.equal(r.who, "Вика");
 });
 
 /* ---------- saving what was typed ---------- */
@@ -257,7 +260,7 @@ test("the star counter counts main and extra answers separately, and so do the g
   await score("чистота", 3);
   await press("#fShowAll");
   await score("магазины", 4.5);
-  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · ещё 1 · для рейтинга нужно 5");
+  assert.equal(await page.text("#fCounts"), "главные ★ 2 из 10 · и 1 ответ без ★ · для рейтинга нужно 5");
   assert.equal(await page.text("#gc-city"), "· 3 из 8");
 });
 
@@ -711,11 +714,11 @@ test("reopening an edit parked as a draft after another device changed it does n
   assert.equal(r.scores["интернет"], 2);
 });
 
-test("answering «Кто вы» on the rate screen keeps the place I picked", { skip }, async () => {
+test("answering «Кто оценивает» on a device without «Кто я» keeps the place I picked", { skip }, async () => {
   await fresh({ hash: "#/rate/new/porto", me: null });
   await page.select("#fPlace", "Батуми");
   await score("интернет", 4);
-  await press('[data-setme="Михаил"]');
+  await press('[data-who="Михаил"]');
   assert.equal(await val("#fPlace"), "batumi");
   assert.equal(await qval("интернет"), "4");
 });

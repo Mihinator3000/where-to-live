@@ -234,7 +234,7 @@ test("a vetoed or screened-out place leaves the ranking and the reason is shown"
   const M = build({ places: [a, b, c], ratings: [rating("alpha", PARTNER, stars(STARS), { veto: "сыро зимой" }), rating("gamma", ME, stars(STARS))] }, { autoData: everywhere(3) });
   assert.deepEqual(M.candidates().map(p => p.id), ["gamma"]);
   const t = text(rankHTML(M, EQUAL));
-  assert.match(t, new RegExp(`Отсев: .*Альфа — вето ${gen(PARTNER)}: сыро зимой`));
+  assert.match(t, new RegExp(`Отсев и вето: .*Альфа — вето ${gen(PARTNER)}: сыро зимой`));
   assert.match(t, /Бета — без причины/);
   assert.equal(M.allFlags()[0].sev, "crit");
   assert.match(M.allFlags()[0].head, /Альфа: вето/);

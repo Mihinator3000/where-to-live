@@ -218,7 +218,7 @@ function bannerHTML() {
   const n = d.queued, lost = d.lost, blocked = ["offline", "auth"].includes(d.status) || (d.status === "error" && !d.loadedAt);
   const queue = (one, many) => (n ? ` В очереди ${onDevice()}: ${countEdits(n)} — ${plural(n, `не потеряется и ${one}`, `не потеряются и ${many}`, `не потеряются и ${many}`)}.` : "");
   let html = "";
-  if (d.status === "auth" && d.errorCode === "access") html += `<div class="banner err"><b>Хранилище ${esc(d.repo)} не найдено.</b> Его переименовали или удалили, либо у ключа нет к нему доступа. Проверьте название и ключ ${inSettings}.${queue("отправится, когда доступ вернётся", "отправятся, когда доступ вернётся")}</div>`;
+  if (d.status === "auth" && d.errorCode === "access") html += `<div class="banner err"><b>Хранилище ${esc(d.repo)} не найдено.</b> Его переименовали или удалили, либо у ключа нет к нему доступа. Проверьте ключ и название хранилища ${inSettings} («Технические подробности»).${queue("отправится, когда доступ вернётся", "отправятся, когда доступ вернётся")}</div>`;
   else if (d.status === "auth" && d.errorCode === "forbidden") html += `<div class="banner err"><b>У ключа нет прав на запись.</b> Читать данные можно, а сохранять — нет. Замените ключ ${inSettings}: нужен доступ на чтение и запись.${queue("отправится с новым ключом", "отправятся с новым ключом")}</div>`;
   else if (d.status === "auth") html += `<div class="banner err"><b>Ключ доступа не подходит.</b> ${d.error && !/не подходит/.test(d.error) ? esc(d.error) + ". " : ""}Проверьте его ${inSettings}.${queue("отправится, когда ключ заработает", "отправятся, когда ключ заработает")}</div>`;
   else if (d.status === "offline") html += `<div class="banner"><b>Нет связи.</b> ${d.loadedAt ? `Показаны данные на ${whenRu(d.loadedAt)}. ` : `${isPhone() ? "На телефоне" : "На этом устройстве"} ещё нет наших мест и оценок — загружу их, когда появится связь. `}${n ? `В очереди ${onDevice()}: ${countEdits(n)} — отправлю сам, когда появится связь.` : d.loadedAt ? "Оценки и правки можно сохранять — отправлю сам, когда появится связь." : ""}</div>`;
@@ -228,7 +228,7 @@ function bannerHTML() {
   if ((d.broken || []).length) html += `<div class="banner">${brokenNote(d.broken)}</div>`;
   const cut = cutNote();
   if (cut) html += `<div class="banner err">${cut}</div>`;
-  if (!me()) html += `<div class="banner">Кто вы на этом устройстве? <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[0])}">${esc(state.schema.people[0])}</button> <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[1])}">${esc(state.schema.people[1])}</button><br><span class="small muted">${hiddenPairs(state.M) ? "Пока это не выбрано, оценки мест, которые оценил только один из нас, скрыты." : "От этого зависит, чьи оценки скрыты, пока вы не оценили место сами."}</span></div>`;
+  if (!me() && !["rate", "settings"].includes(state.route.name)) html += `<div class="banner">Кто вы на этом устройстве? <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[0])}">${esc(state.schema.people[0])}</button> <button type="button" class="btn ghost small" data-setme="${esc(state.schema.people[1])}">${esc(state.schema.people[1])}</button><br><span class="small muted">${hiddenPairs(state.M) ? "Пока это не выбрано, оценки мест, которые оценил только один из нас, скрыты." : "От этого зависит, чьи оценки скрыты, пока вы не оценили место сами."}</span></div>`;
   const row = (l, i, apply) => `<div class="lost"><span id="lost-${i}">${esc(lostLabel(l))}</span><button type="button" class="btn ghost small" data-lostapply="${i}" aria-describedby="lost-${i}"${blocked ? " disabled" : ""}>${apply}</button><button type="button" class="btn ghost small" data-lostdrop="${i}" aria-describedby="lost-${i}"${blocked ? " disabled" : ""}>Выбросить</button></div>`;
   const wait = blocked ? `<p class="small">Кнопки заработают, когда появится связь.</p>` : "";
   const refused = lost.map((l, i) => [l, i]).filter(([l]) => l.why === "rejected"), clashed = lost.map((l, i) => [l, i]).filter(([l]) => l.why !== "rejected");
@@ -333,7 +333,7 @@ function renderRank(moves = {}) {
         <li>«Год здесь» — «прожили бы здесь год?», 0–10.</li>
         <li>В основной список место попадает, когда отвечено хотя бы на половину главных вопросов ★.</li>
         <li>${who ? "Оценка партнёра скрыта, пока вы не оцените место сами; открыть её можно в досье кнопкой «Показать всё равно»." : "Пока не выбрано, кто вы на этом устройстве, оценки мест, которые оценил только один из нас, скрыты."}</li>
-        <li>«Отсев» — места, от которых отказались или где у кого-то вето: в рейтинг не входят.</li>
+        <li>«Отсев и вето» — места, от которых отказались или где у кого-то вето: в рейтинг не входят.</li>
         <li>«Из ${TRIPS_BUDGET}» — сколько поездок-разведок мы запланировали всего.</li>
       </ul></details>
     </section>
@@ -433,6 +433,8 @@ function tripCount() {
 }
 
 /* ---------- places ---------- */
+const markEol = list => list.querySelectorAll(".prow .meta").forEach(m => { const k = [...m.children], top = k.map(s => s.getBoundingClientRect().top); k.forEach((s, i) => s.classList.toggle("eol", i < k.length - 1 && top[i + 1] > top[i] + 2)); });
+const lineEnds = typeof ResizeObserver === "function" ? new ResizeObserver(es => es.forEach(e => markEol(e.target))) : null;
 function renderPlaces() {
   const el = $("v-places");
   const preset = presetNames(state.M).includes(state.preset) ? state.preset : "Поровну";
@@ -442,7 +444,8 @@ function renderPlaces() {
     ${state.M.places.length ? `<input type="search" id="placeFilter" placeholder="Фильтр по названию или стране" value="${esc(state.placeFilter)}" aria-label="Фильтр мест" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">` : ""}
     <div class="panel plist" id="plist">${placesListHTML(state.M, W(), state.placeFilter, emptyNote())}</div>
     ${state.M.places.length ? `<p class="small muted">Статусы: кандидат — смотрим и ездим на разведку, финалист — главный претендент, отсев — отказались, вето — кто-то из нас против; такие места не в рейтинге.</p>` : ""}`;
-  $("placeFilter")?.addEventListener("input", e => { state.placeFilter = e.target.value; $("plist").innerHTML = placesListHTML(state.M, W(), state.placeFilter, emptyNote()); });
+  lineEnds?.disconnect(); lineEnds?.observe($("plist"));
+  $("placeFilter")?.addEventListener("input", e => { state.placeFilter = e.target.value; $("plist").innerHTML = placesListHTML(state.M, W(), state.placeFilter, emptyNote()); markEol($("plist")); });
   $("placeFilter")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
 }
 
@@ -799,6 +802,7 @@ function renderRate(arg) {
     state.form = new RateForm($("rateForm"), state.schema, {
       canWrite,
       save: (body, { isNew, baseOid, questions, patch, was } = {}) => state.data.saveRating(body, { isNew, baseOid, questions, patch, was }),
+      setMe: (who, quiet) => { setMe(who); if (!quiet) toast(`Это устройство: ${who}. Поменять можно в настройках.`); },
       saved: (res, placeId) => {
         savedNow(res.r);
         const M = state.M, who = res.doc && res.doc.who, partner = M.PEOPLE.find(w => w !== who);
@@ -911,9 +915,9 @@ function renderSettings() {
           <li>Repository access → Only select repositories → <b>${esc(d.repo.split("/")[1] || "where-to-live-data")}</b>.</li>
           <li>Generate token, скопируйте и вставьте сюда. Для телефона Вики — отдельный ключ с её именем, чтобы отзывать независимо.</li>
           <li>Сохраните ключ ещё и в Связке ключей или менеджере паролей: на сайт его можно ввести заново за минуту.</li></ol></details>
-        <details><summary class="small">Технические подробности</summary><div class="stack" style="margin-top:8px">
-          <p class="small muted">Это fine-grained токен GitHub с доступом только к одному репозиторию. Он хранится в памяти браузера на этом устройстве и уходит только на api.github.com.</p>
-          <label class="field"><span class="lbl">Репозиторий с данными</span><input type="text" name="repo" value="${esc(d.repo)}" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></label>
+        <details${d.status === "auth" && d.errorCode === "access" ? " open" : ""}><summary class="small">Технические подробности</summary><div class="stack" style="margin-top:8px">
+          <p class="small muted">Это fine-grained токен GitHub с доступом только к одному хранилищу (репозиторию). Он хранится в памяти браузера на этом устройстве и уходит только на api.github.com.</p>
+          <label class="field"><span class="lbl">Хранилище с данными (репозиторий GitHub: владелец/имя)</span><input type="text" name="repo" value="${esc(d.repo)}" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></label>
         </div></details>
       </form>
     </section>
@@ -958,7 +962,7 @@ function renderSettings() {
     if (btn.disabled) return;
     msg.className = "msg";
     const fail = text => { msg.textContent = text; msg.className = "msg err"; };
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("Репозиторий укажите как владелец/имя, например Mihinator3000/where-to-live-data.");
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return fail("Хранилище укажите как владелец/имя, например Mihinator3000/where-to-live-data.");
     if (!token && !d.hasToken) return fail("Вставьте ключ доступа: без него данные не загрузить.");
     btn.disabled = true; btn.textContent = "Проверяю…";
     const done = () => { if (btn.isConnected) { btn.disabled = false; btn.textContent = "Сохранить и проверить"; } };

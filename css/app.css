@@ -285,7 +285,7 @@ thead th { font-weight: 500; color: var(--muted); font-size: 12px; border-bottom
 .clim svg { width: 100%; height: auto; display: block; }
 .clim text { fill: var(--muted); font-size: 10px; font-family: var(--f-mono); }
 .sim { display: grid; gap: 0; }
-.sim-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.sim-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .sim-row:first-child { border-top: 0; }
 .sim-h { margin: 12px 0 2px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .sim-row small { color: var(--muted); font-size: 12px; grid-column: 1 / -1; }
@@ -302,6 +302,7 @@ thead th { font-weight: 500; color: var(--muted); font-size: 12px; border-bottom
 .prow .score { font-size: 17px; }
 .prow .meta { grid-column: 2 / -1; font-size: 12px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
 .prow .meta > span:not(:last-child)::after { content: "·"; margin-left: 6px; }
+.prow .meta > span.eol::after { visibility: hidden; }
 
 /* form */
 .fcard { padding: 14px 16px; display: grid; gap: 14px; }
@@ -386,13 +387,13 @@ details.inline summary { display: inline-block; min-height: 24px; padding: 3px 0
 @media (max-width: 560px) { .pick.y { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 
 /* tap targets ≥ 24px, form pieces */
-summary { min-height: 28px; display: flex; align-items: center; }
+summary { min-height: 40px; display: flex; align-items: center; }
 details > summary { list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▸"; margin-right: 6px; color: var(--muted); }
 details[open] > summary::before { content: "▾"; }
 .place-head > a { display: inline-flex; align-items: center; min-height: 32px; align-self: start; width: max-content; }
-.sim-row button, .sim-row a { min-height: 28px; display: inline-flex; align-items: center; flex-wrap: wrap; column-gap: .3em; }
+.sim-row button, .sim-row a { min-height: 40px; display: inline-flex; align-items: center; flex-wrap: wrap; column-gap: .3em; }
 .ptop button { min-height: 32px; align-items: center; }
 .pick { grid-template-columns: repeat(var(--n, 9), minmax(0, 1fr)); }
 .draft-chip { display: inline-flex; align-items: center; gap: 2px; margin: 2px 6px 2px 0; }

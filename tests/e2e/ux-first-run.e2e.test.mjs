@@ -373,12 +373,16 @@ test("while the first key is being checked the button shows it is busy and a sec
   } finally { await page.eval(`localStorage.removeItem("mock:delay")`); }
 });
 
-test("after the first sync without a chosen person, every data screen asks «Кто вы» and one answer clears it everywhere", { skip }, async () => {
+test("after the first sync without a chosen person, every data screen asks «Кто вы» (the rate screen through «Кто оценивает») and one answer clears it everywhere", { skip }, async () => {
   await open({ me: "", hash: "#/rank" });
-  for (const h of ["rank", "places", "rate", "place/porto"]) {
+  for (const h of ["rank", "places", "place/porto"]) {
     await page.goto(srv.url + "#/" + h, 300);
     assert.match(await viewText(h.startsWith("place/") ? "v-place" : "v-" + h), /Кто вы на этом устройстве\?/, h);
   }
+  await page.goto(srv.url + "#/rate", 300);
+  const rate = await viewText("v-rate");
+  assert.doesNotMatch(rate, /Кто вы на этом устройстве/, "a second picker above «Кто оценивает»");
+  assert.match(rate, /Кто оценивает/);
   await page.goto(srv.url + "#/places", 300);
   await page.tap({ text: "Вика", within: "#v-places .banner" });
   assert.match(await toastText(/Это устройство/), /Вика/);

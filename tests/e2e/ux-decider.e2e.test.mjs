@@ -125,7 +125,7 @@ test("our ranking puts Порту first, then Херцег-Нови, Вален�
   const pale = (await rows()).filter(r => r.pale).map(r => r.name).sort();
   assert.deepEqual(pale, ["Анталья", "Будва", "Лимасол"].sort());
   const rank = (await page.text("#rank")).replace(/\s+/g, " ");
-  assert.match(rank, /Отсев:.*Батуми[^;]*вето[^;]*Плесень в каждой квартире/);
+  assert.match(rank, /Отсев и вето:.*Батуми[^;]*вето[^;]*Плесень в каждой квартире/);
   assert.match(rank, /Белград[^;]*Смог зимой и далеко от моря/);
   assert.ok(!(await rows()).some(r => r.name === "Батуми" || r.name === "Белград"), "out places are not ranked rows");
 });

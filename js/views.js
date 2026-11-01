@@ -60,7 +60,7 @@ export function rankHTML(M, W, moves = {}, fast = false) {
   const waiting = r.unrated.filter(x => hiddenWho(M, x.p.id).length), unrated = r.unrated.filter(x => !waiting.includes(x));
   if (waiting.length) html += `<div class="empty-row">${anon(M) ? "Скрыты, пока не выбрано, кто вы" : "Ждут вашей оценки"}: ${waiting.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${esc(anon(M) ? hiddenWho(M, x.p.id).map(w => "оценка " + gen(w)).join(" и ") : hiddenNote(M, x.p.id))}`).join("; ")}</div>`;
   if (unrated.length) html += `<div class="empty-row">Ещё без оценок и данных: ${unrated.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a>`).join(", ")}</div>`;
-  if (r.out.length) html += `<div class="empty-row">Отсев: ${r.out.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${esc(x.why)}`).join("; ")}</div>`;
+  if (r.out.length) html += `<div class="empty-row">Отсев и вето: ${r.out.map(x => `<a href="${placeHref(x.p.id)}">${esc(x.p.name)}</a> — ${esc(x.why)}`).join("; ")}</div>`;
   return html;
 }
 
@@ -245,6 +245,6 @@ export function placesListHTML(M, W, filter, connected = true) {
     if (t.base) return `${head}<a class="prow" href="${placeHref(p.id)}"><i class="sw" style="background:var(--base)"></i><b>${esc(p.name)}</b><span class="score num">3.0</span>
       <span class="meta">${p.country ? `<span>${esc(p.country)}</span>` : ""}<span>точка отсчёта: с ним сравниваем все места</span></span></a>`;
     return `${head}<a class="prow" href="${placeHref(p.id)}"><i class="sw" style="background:${t.score == null ? "var(--none)" : scoreColor(t.score)}"></i><b>${esc(p.name)}</b><span class="score num">${fmt(t.score)}</span>
-      <span class="meta">${p.country ? `<span>${esc(p.country)}</span>` : ""}<span>${esc(out && p.status !== "отсев" ? "вето" : p.status || "кандидат")}</span><span>${n ? "оценок: " + n : hiddenNote(M, p.id) || (t.score != null ? "только мировые данные" : "оценок нет")}</span>${years ? `<span title="Прожили бы здесь год? 0–10">прожили бы здесь год: ${esc(years)}</span>` : ""}${t.score != null && t.coverage < MIN_COVERAGE ? `<span>заполнено ${Math.round(t.coverage * 100)}%</span>` : ""}</span></a>`;
+      <span class="meta">${p.country ? `<span>${esc(p.country)}</span>` : ""}<span>${esc(out && p.status !== "отсев" ? "вето" : p.status || "кандидат")}</span><span>${n ? "оценок: " + n : hiddenNote(M, p.id) || (t.score != null ? "только мировые данные" : "оценок нет")}</span>${t.score != null && t.coverage < MIN_COVERAGE ? `<span>заполнено ${Math.round(t.coverage * 100)}%</span>` : ""}</span>${years ? `<span class="meta yr"><span title="Прожили бы здесь год? 0–10">прожили бы здесь год: ${esc(years)}</span></span>` : ""}</a>`;
   }).join("");
 }

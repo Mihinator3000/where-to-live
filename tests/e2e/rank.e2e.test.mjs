@@ -189,7 +189,7 @@ test("rejected and vetoed places are not ranked but listed under «Отсев» 
   const rows = await page.eval(`[...document.querySelectorAll("#rank a.row b")].map(b => b.innerText)`);
   for (const n of ["Дельта", "Эта", "Зета"]) assert.ok(!rows.includes(n), n + " is not ranked");
   const t = await page.text("#rank");
-  assert.match(t, /Отсев: .*Дельта — дорого/);
+  assert.match(t, /Отсев и вето: .*Дельта — дорого/);
   assert.match(t, /Эта — без причины/);
   assert.match(t, /Зета — вето Михаила: шумно/);
   await page.tap({ sel: "#rank .empty-row a", text: "Зета" });

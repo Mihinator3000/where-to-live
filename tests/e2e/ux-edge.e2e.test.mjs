@@ -182,7 +182,7 @@ test("with 50 places every one is listed, the ranking shows them, and screened-o
   const rank = await page.text("#rank");
   const missing = Array.from({ length: 50 }, (_, i) => "Место " + (i + 1)).filter(n => !new RegExp(n + "(?!\\d)").test(rank));
   assert.deepEqual(missing, [], "places missing from the ranking screen");
-  assert.match(rank, /Отсев:[^]*Место 8 — дорого/);
+  assert.match(rank, /Отсев и вето:[^]*Место 8 — дорого/);
   assert.equal(await page.eval(`document.querySelectorAll("#heat tbody tr").length`), 43, "the heat map lists SPb and every candidate");
   noErrors("50 places");
 });
